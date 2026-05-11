@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Visibility Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AI</div>
+          <div>
+            <h1>Visibility Monitor</h1>
+            <p>关键词可见度监测</p>
+          </div>
+        </div>
+
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <button id="navResults" class="primary-nav-item active" data-view="results">结果查看</button>
+          <button id="navConfig" class="primary-nav-item" data-view="config">配置管理</button>
+          <button id="navRun" class="primary-nav-item" data-view="run">运行任务</button>
+        </nav>
+
+        <div id="runSidebar" class="sidebar-section">
+          <div class="section-label">Runs</div>
+          <div id="runList" class="run-list"></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div id="topEyebrow" class="eyebrow">结果查看</div>
+            <h2 id="pageTitle">选择一次运行结果</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="refreshButton" class="icon-button" title="刷新">↻</button>
+          </div>
+        </header>
+
+        <section id="view-results" class="view-panel">
+          <section id="emptyState" class="empty-state">
+            <h3>暂无可展示的运行结果</h3>
+            <p>执行一次监测后，这里会自动展示问题、关键词、统计和回答详情。</p>
+          </section>
+
+          <section id="dashboard" class="dashboard hidden">
+            <div class="metrics-grid">
+              <div class="metric">
+                <span>回答记录</span>
+                <strong id="metricAnswers">0</strong>
+              </div>
+              <div class="metric">
+                <span>成功回答</span>
+                <strong id="metricSuccess">0</strong>
+              </div>
+              <div class="metric">
+                <span>监测平台</span>
+                <strong id="metricPlatforms">0</strong>
+              </div>
+              <div class="metric">
+                <span>关键词数</span>
+                <strong id="metricKeywords">0</strong>
+              </div>
+            </div>
+
+            <nav class="tabs" aria-label="Dashboard tabs">
+              <button class="tab active" data-tab="overview">概览</button>
+              <button class="tab" data-tab="questions">问题列表</button>
+              <button class="tab" data-tab="keywords">关键词</button>
+              <button class="tab" data-tab="answers">回答详情</button>
+            </nav>
+
+            <section id="tab-overview" class="tab-panel">
+              <div class="panel-grid">
+                <section class="panel">
+                  <div class="panel-header">
+                    <h3>全平台关键词出现率</h3>
+                  </div>
+                  <div id="globalSummary" class="summary-list"></div>
+                </section>
+                <section class="panel">
+                  <div class="panel-header">
+                    <h3>平台关键词表现</h3>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>平台</th>
+                          <th>关键词</th>
+                          <th>出现</th>
+                          <th>出现率</th>
+                          <th>均排</th>
+                          <th>最佳</th>
+                        </tr>
+                      </thead>
+                      <tbody id="platformSummary"></tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            </section>
+
+            <section id="tab-questions" class="tab-panel hidden">
+              <section class="panel">
+                <div class="panel-header">
+                  <h3>问题列表</h3>
+                  <input id="questionSearch" class="search-input" placeholder="搜索问题" />
+                </div>
+                <div id="questionList" class="question-list"></div>
+              </section>
+            </section>
+
+            <section id="tab-keywords" class="tab-panel hidden">
+              <section class="panel">
+                <div class="panel-header">
+                  <h3>关键词列表</h3>
+                </div>
+                <div id="keywordGrid" class="keyword-grid"></div>
+              </section>
+            </section>
+
+            <section id="tab-answers" class="tab-panel hidden">
+              <section class="panel">
+                <div class="panel-header">
+                  <h3>回答记录</h3>
+                  <div class="filters">
+                    <select id="platformFilter"></select>
+                    <select id="statusFilter">
+                      <option value="">全部状态</option>
+                      <option value="success">success</option>
+                      <option value="partial_success">partial_success</option>
+                      <option value="failed">failed</option>
+                      <option value="timeout">timeout</option>
+                      <option value="blocked">blocked</option>
+                      <option value="login_required">login_required</option>
+                      <option value="empty_answer">empty_answer</option>
+                    </select>
+                  </div>
+                </div>
+                <div id="answerList" class="answer-list"></div>
+              </section>
+            </section>
+          </section>
+        </section>
+
+        <section id="view-config" class="view-panel hidden">
+          <div class="panel-grid config-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <h3>问题配置</h3>
+                  <p id="configQuestionCount" class="panel-note"></p>
+                </div>
+              </div>
+              <label class="bulk-question-editor">
+                <span>每行一个问题，保存时自动生成 Q001、Q002...</span>
+                <textarea id="configQuestionsText" rows="18" placeholder="What are the best tool brands for home repair?&#10;Which power tool brands are good for small hardware stores?"></textarea>
+              </label>
+            </section>
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <h3>关键词配置</h3>
+                  <p id="configKeywordCount" class="panel-note"></p>
+                </div>
+                <button id="addKeywordButton" class="secondary-button">新增关键词</button>
+              </div>
+              <div id="configKeywords" class="config-list"></div>
+            </section>
+          </div>
+          <section class="panel config-actions-panel">
+            <div class="config-actions">
+              <div>
+                <strong id="configPath">配置文件</strong>
+                <p id="configStatus" class="panel-note">修改问题或关键词后点击保存。</p>
+              </div>
+              <button id="saveConfigButton" class="primary-button">保存配置</button>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-run" class="view-panel hidden">
+          <section class="panel run-panel">
+            <div class="panel-header">
+              <div>
+                <h3>运行任务</h3>
+                <p class="panel-note">使用当前配置立即执行一次监测。运行期间请保持已登录 Chrome 和调试端口打开。</p>
+              </div>
+              <button id="startRunButton" class="primary-button">开始运行</button>
+            </div>
+            <div class="run-status-grid">
+              <div class="metric">
+                <span>状态</span>
+                <strong id="runStatusText">Idle</strong>
+              </div>
+              <div class="metric">
+                <span>退出码</span>
+                <strong id="runExitCode">-</strong>
+              </div>
+            </div>
+            <pre id="runLog" class="run-log">尚未启动运行。</pre>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="answerDialog" class="answer-dialog">
+      <div class="dialog-header">
+        <div>
+          <div id="dialogMeta" class="eyebrow"></div>
+          <h3 id="dialogTitle"></h3>
+        </div>
+        <button id="closeDialog" class="icon-button" title="关闭">×</button>
+      </div>
+      <div id="dialogKeywords" class="dialog-keywords"></div>
+      <div class="dialog-body">
+        <article>
+          <h4>完整回答</h4>
+          <pre id="dialogAnswer"></pre>
+        </article>
+        <aside>
+          <h4>截图</h4>
+          <div id="dialogScreenshot" class="screenshot-box"></div>
+        </aside>
+      </div>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

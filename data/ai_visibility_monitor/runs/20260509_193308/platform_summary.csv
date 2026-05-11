@@ -1,0 +1,9 @@
+run_id,platform_id,keyword,total_questions,appeared_count,appearance_rate,avg_rank,best_rank,missed_count
+20260509_193308,chatgpt,deli,0,0,0.0000,,,0
+20260509_193308,chatgpt,Bosch,0,0,0.0000,,,0
+20260509_193308,chatgpt,Makita,0,0,0.0000,,,0
+20260509_193308,chatgpt,Stanley,0,0,0.0000,,,0
+20260509_193308,gemini,deli,0,0,0.0000,,,0
+20260509_193308,gemini,Bosch,0,0,0.0000,,,0
+20260509_193308,gemini,Makita,0,0,0.0000,,,0
+20260509_193308,gemini,Stanley,0,0,0.0000,,,0
