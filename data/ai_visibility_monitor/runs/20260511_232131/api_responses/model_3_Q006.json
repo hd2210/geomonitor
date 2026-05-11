@@ -1,0 +1,23 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "flag": 0,
+      "index": 0,
+      "message": {
+        "content": "For beginners on a budget, here are some excellent tool brands that offer good quality without breaking the bank:\n\n### **Top Budget-Friendly Brands:**\n1. **Harbor Freight (Pittsburgh, Bauer, Hercules)**  \n   - **Best for:** Hand tools, power tools, tool storage  \n   - **Why:** Extremely affordable, lifetime warranty on many hand tools, great for learning without fear of damaging expensive gear.  \n   - **Tip:** Stick to their Pittsburgh Pro or Quinn lines for better durability.\n\n2. **Ryobi (One+ System)**  \n   - **Best for:** Cordless power tools  \n   - **Why:** Huge range of tools sharing the same battery, reliable for DIY, often on sale at Home Depot.  \n   - **Tip:** Their 18V One+ system is a gateway to expanding your toolkit affordably.\n\n3. **Kobalt (Lowe’s)**  \n   - **Best for:** Hand tools, mechanics’ tools, 24V cordless tools  \n   - **Why:** Good quality-to-price ratio, lifetime warranty on most hand tools, decent performance for home projects.\n\n4. **Hart (Walmart)**  \n   - **Best for:** Basic power tools and hand tools  \n   - **Why:** Walmart’s budget brand made by TTI (same parent as Ryobi), very affordable starter kits.\n\n5. **Black+Decker**  \n   - **Best for:** Light-duty tools (drills, sanders, small appliances)  \n   - **Why:** Inexpensive and widely available, good for occasional use.  \n   - **Note:** Avoid for heavy-duty tasks—they’re more for casual DIY.\n\n6. **WEN**  \n   - **Best for:** Benchtop tools (saws, sanders, drills)  \n   - **Why:** Surprisingly capable for the price, often compared to more expensive brands in reviews.\n\n### **Tips for Beginners:**\n- **Start with a core set:** A drill/driver, hammer, screwdrivers, adjustable wrench, tape measure, and level cover 80% of basic tasks.\n- **Buy used:** Check Facebook Marketplace, Craigslist, or pawn shops for lightly used tools (especially brands like DeWalt or Milwaukee, which last).\n- **Prioritize safety:** Even budget tools should have basic safety features (e.g., blade guards, anti-kickback).\n- **Avoid “disposable” tools:** Extremely cheap no-name brands may fail quickly or be unsafe.\n\n### **When to Invest More:**\n- If you use a tool frequently, consider upgrading (e.g., a better drill or circular saw).\n- For precision work (e.g., woodworking), mid-range brands like **Skil** or **Bosch** offer better accuracy.\n\n**Bottom line:** Harbor Freight for hand tools, Ryobi for cordless power tools, and Kobalt for a balance of both. As you gain experience, you’ll learn which tools deserve an upgrade! 🔧",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778513256,
+  "id": "as-neg9x5q7ne",
+  "model": "deepseek-ai/DeepSeek-V3.1",
+  "object": "chat.completion",
+  "u_trace_id": "e1cb5fc8-9849-4146-a7bb-145be3c69291",
+  "usage": {
+    "completion_tokens": 618,
+    "prompt_tokens": 27,
+    "total_tokens": 645
+  }
+}

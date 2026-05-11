@@ -1,0 +1,48 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "annotations": [],
+        "content": "Here are some dependable tool brands that are great for basic home repairs and small DIY projects. These brands balance price, quality, and availability:\n\n• DeWalt  \nReliable, durable, and widely used. Great if you want long-lasting tools without going overly premium.\n\n• Milwaukee  \nHigh‑quality and powerful. Often more expensive but excellent for anyone who wants tools that will grow with their skills.\n\n• Makita  \nBalanced performance and ergonomics. Good for both beginners and experienced DIYers.\n\n• Bosch  \nSolid tools, especially for drills, drivers, and measuring devices. Good reputation for accuracy and reliability.\n\n• Craftsman  \nAffordable and dependable. Excellent for homeowners who need a complete set without overspending.\n\n• Ryobi  \nBudget‑friendly and beginner‑friendly. Huge battery ecosystem, making it easy to expand as you take on more projects.\n\n• Kobalt  \nLowe’s house brand, good value for the price. Their cordless tools are surprisingly solid for casual use.\n\n• Stanley  \nGreat for basic hand tools like hammers, screwdrivers, and utility knives.\n\nIf you want the simplest recommendation:  \nFor power tools on a budget, go with Ryobi.  \nFor better performance without breaking the bank, choose DeWalt or Makita.  \nFor hand tools, Stanley or Craftsman are safe picks.\n\nIf you tell me what kinds of projects you expect to do, I can narrow it down further.",
+        "refusal": null,
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778512892,
+  "id": "chatcmpl-DeMjkpRUSqhVNOylMvFbpP2tOW0X3",
+  "model": "gpt-5.1-chat",
+  "object": "chat.completion",
+  "service_tier": "default",
+  "system_fingerprint": null,
+  "u_trace_id": "8c319f25-9f9a-461d-a3c0-fb7510860ddb",
+  "usage": {
+    "completion_tokens": 294,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "latency_checkpoint": {
+      "engine_tbt_ms": 10,
+      "engine_ttft_ms": 41,
+      "engine_ttlt_ms": 3105,
+      "pre_inference_ms": 155,
+      "service_tbt_ms": 10,
+      "service_ttft_ms": 433,
+      "service_ttlt_ms": 3480,
+      "total_duration_ms": 3334,
+      "user_visible_ttft_ms": 278
+    },
+    "prompt_tokens": 20,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    },
+    "total_tokens": 314
+  }
+}

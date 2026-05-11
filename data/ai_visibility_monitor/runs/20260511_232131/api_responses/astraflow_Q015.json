@@ -1,0 +1,48 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "annotations": [],
+        "content": "If you want tools that are affordable but still feel solid, durable, and pleasant to use, these brands consistently hit that sweet spot:\n\n• Ryobi – Probably the best value-for-money cordless tool system. Good performance, huge lineup, very wallet‑friendly.  \n• Craftsman – Solid, dependable, and inexpensive. Great for homeowners and light‑to‑medium DIY work.  \n• Kobalt – Lowe’s house brand; surprisingly robust and well‑built for the price.  \n• Ridgid – Often a step up in build quality while still affordable, plus excellent warranties.  \n• Skil (especially the PWRCore 20 line) – Smooth, ergonomic tools with good battery tech at low prices.\n\nIf you want the simplest recommendation: pick Ryobi for the biggest ecosystem or Ridgid if you want tougher tools without jumping to pro-tier prices.",
+        "refusal": null,
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778513018,
+  "id": "chatcmpl-DeMlm37KJjPmzHjQ3WG3pTXmOm7Cl",
+  "model": "gpt-5.1-chat",
+  "object": "chat.completion",
+  "service_tier": "default",
+  "system_fingerprint": null,
+  "u_trace_id": "7975de74-3360-4f16-af22-a134aaba9838",
+  "usage": {
+    "completion_tokens": 182,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "latency_checkpoint": {
+      "engine_tbt_ms": 11,
+      "engine_ttft_ms": 67,
+      "engine_ttlt_ms": 2199,
+      "pre_inference_ms": 123,
+      "service_tbt_ms": 11,
+      "service_ttft_ms": 256,
+      "service_ttlt_ms": 2385,
+      "total_duration_ms": 2270,
+      "user_visible_ttft_ms": 132
+    },
+    "prompt_tokens": 24,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    },
+    "total_tokens": 206
+  }
+}

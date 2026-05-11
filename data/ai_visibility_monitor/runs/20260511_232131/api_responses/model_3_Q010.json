@@ -1,0 +1,23 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "flag": 0,
+      "index": 0,
+      "message": {
+        "content": "Of course! For regular home use, you want tools that strike a perfect balance between durability, comfort, and value—without the professional-grade price tag. Here are the most recommended brands, categorized by what they excel at.\n\n### **Top Tier: The \"Buy It for Life\" & Premium Brands**\nThese are known for exceptional durability, often with forged heads and solid steel or premium hardwood handles. They are an investment.\n*   **Fiskars (Finland):** The gold standard for **pruners, loppers, and shears**. Their patented gear mechanisms and non-stick blades are legendary. Also excellent for ergonomic hand tools and axes.\n*   **Corona (USA):** A favorite of arborists and serious gardeners. Their bypass pruners and loppers are incredibly robust and hold an edge superbly. Slightly less refined ergonomics than Fiskars, but often more heavy-duty.\n*   **Felco (Switzerland):** The **ultimate pruner**. If you do a lot of pruning, a pair of Felco secateurs (like the Felco #2) is a lifetime purchase. Fully repairable with replaceable parts.\n*   **Bully Tools (USA):** Known for incredibly strong, one-piece forged steel shovels, rakes, and hoes with a lifetime warranty. They are virtually indestructible for residential use.\n\n### **Excellent Mid-Range: Best Value & Reliability**\nThese brands offer outstanding quality for the price, perfect for the weekend warrior. They are widely available and consistently good.\n*   **DeWalt & Stanley:** Their **garden hand tools** (trowels, cultivators) and pruning saws are surprisingly robust, often with comfortable, durable handles. A safe bet for durability.\n*   **Ames (USA):** One of the oldest tool companies in the US. Offers a huge range from good-value homeowner lines to their more professional \"True Temper\" brand. Great for rakes, shovels, and brooms.\n*   **Radius Garden (USA):** Innovative ergonomic design. Their tools are easy on the joints, with clever features like root-slicing trowels and ergonomic handles. Excellent for those with hand or wrist issues.\n\n### **Great for Specific Tools**\n*   **Dramm (USA):** The undisputed king of **watering cans and hoses**. Their \"Water Breaker\" nozzles are gentle and rain-like. Their professional-grade hoses (like the ColorStorm) are superb.\n*   **Lee Valley Tools:** Carries a curated selection of exceptionally well-designed tools from brands like **Niwa** (Japanese-style pruning saws) and **Sneeboer** (artisan Dutch tools). A source for unique, high-performance items.\n\n### **Big Box Store Staples (Good for Basic, Light-Duty Use)**\n*   **Fiskars (Xact & Lower-End Lines):** More affordable and perfectly fine for light gardening.\n*   **Scotts/Miracle-Gro:** Often made by reputable manufacturers (like Ames). Their hand tools are decent for occasional use but may not last decades.\n*   **CobraHead:** A single, brilliant weeder/cultivator tool that is highly recommended by enthusiasts.\n\n### **Key Tips for Choosing:**\n1.  **Avoid Hollow Construction:** For shovels and spades, look for a **solid socket or forged strap** where the handle meets the head, not a cheap, riveted tube.\n2.  ️**Handle Material:** **Solid Ash or Hickory** are classic and strong. **Fiberglass** is durable and dampens vibration. Avoid thin, brittle plastic.\n3.  **Comfort is Key:** If a tool feels awkward in the store, it will be worse after an hour in the garden. Look for ergonomic grips.\n4.  **Maintenance:** Even the best tools need care. Clean soil off after use, dry them, and occasionally oil wooden handles and sharpen blades.\n\n**Final Recommendation:** For a starter set, you can't go wrong focusing on **Fiskars for cutting tools** (pruners, shears) and **Ames or Bully Tools for long-handled tools** (shovel, rake). This combination gives you pro-level performance where precision matters most and heavy-duty strength for digging and moving material.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778513383,
+  "id": "as-6adjvwtgtg",
+  "model": "deepseek-ai/DeepSeek-V3.1",
+  "object": "chat.completion",
+  "u_trace_id": "7ba60b4c-686d-48cb-8f2d-31d6aba5af29",
+  "usage": {
+    "completion_tokens": 903,
+    "prompt_tokens": 21,
+    "total_tokens": 924
+  }
+}

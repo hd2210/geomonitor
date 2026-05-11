@@ -110,32 +110,28 @@
   ],
   "ai_platforms": [
     {
-      "platform_id": "chatgpt",
-      "platform_name": "ChatGPT",
-      "url": "https://chatgpt.com",
-      "method": "browser",
-      "selectors": {
-        "input": "textarea, [contenteditable='true']",
-        "submit": "button[type='submit']",
-        "answer_container": "main",
-        "answer_item": "[data-message-author-role='assistant']",
-        "login_indicator": "text=Log in",
-        "blocked_indicator": "text=/verify you are human|请验证您是真人|Cloudflare/i"
-      }
+      "platform_id": "astraflow",
+      "platform_name": "chatgpt",
+      "method": "api",
+      "model": "gpt-5.1-chat",
+      "web_search": true,
+      "api_base_url": "https://api.modelverse.cn/v1/chat/completions"
     },
     {
       "platform_id": "gemini",
-      "platform_name": "Gemini",
-      "url": "https://gemini.google.com",
-      "method": "browser",
-      "selectors": {
-        "input": "div.ql-editor[contenteditable='true'][aria-label='Enter a prompt for Gemini'], rich-textarea .ql-editor[contenteditable='true']:not(.ql-clipboard), textarea",
-        "submit": "button[aria-label='Send message'], button.send-button, button[aria-label*='Send'], button[aria-label*='Submit']",
-        "answer_container": "main",
-        "answer_item": "message-content, .model-response-text",
-        "login_indicator": "text=Sign in",
-        "blocked_indicator": "text=/unusual traffic|请验证您是真人|Cloudflare/i"
-      }
+      "platform_name": "gemini",
+      "method": "api",
+      "model": "gemini-2.5-pro",
+      "web_search": true,
+      "api_base_url": "https://api.modelverse.cn/v1/chat/completions"
+    },
+    {
+      "platform_id": "deepseek",
+      "platform_name": "deepseek",
+      "method": "api",
+      "model": "deepseek-ai/DeepSeek-V3.1",
+      "web_search": true,
+      "api_base_url": "https://api.modelverse.cn/v1/chat/completions"
     }
   ],
   "schedule": {
@@ -145,13 +141,13 @@
   "output_dir": "./data/ai_visibility_monitor/runs/{run_id}",
   "runner": {
     "timeout_seconds": 120,
-    "min_delay_seconds": 10,
-    "max_delay_seconds": 30,
+    "min_delay_seconds": 2,
+    "max_delay_seconds": 5,
     "headless": false,
     "browser_profile_dir": "./data/browser-profiles",
     "browser_channel": null,
     "browser_executable_path": null,
-    "browser_cdp_url": "http://127.0.0.1:9222",
+    "browser_cdp_url": null,
     "viewport_width": 1440,
     "viewport_height": 1200
   }

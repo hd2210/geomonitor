@@ -371,6 +371,16 @@ textarea {
   align-items: start;
 }
 
+.model-config-panel {
+  margin-bottom: 18px;
+}
+
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
 .config-list {
   display: grid;
   gap: 12px;
@@ -416,6 +426,19 @@ textarea {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
+}
+
+.checkbox-field {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.checkbox-field input {
+  min-width: 0;
 }
 
 .primary-button,

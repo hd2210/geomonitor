@@ -2,3 +2,4 @@ playwright>=1.44.0
 PyYAML>=6.0.1
 croniter>=2.0.5
 pytest>=8.0.0
+certifi>=2024.0.0

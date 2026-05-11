@@ -56,9 +56,13 @@ class PlatformSelectors:
 class AIPlatform:
     platform_id: str
     platform_name: str
-    url: str
-    method: Literal["browser"] = "browser"
+    url: str | None = None
+    method: Literal["browser", "api"] = "browser"
     selectors: PlatformSelectors = field(default_factory=PlatformSelectors)
+    model: str | None = None
+    api_base_url: str | None = None
+    web_search: bool = True
+    web_search_vendor: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,7 @@ class AnswerRecord:
     answer_text: str | None = None
     screenshot_path: str | None = None
     raw_html_path: str | None = None
+    raw_response_path: str | None = None
     status: AnswerStatus = "failed"
     error_message: str | None = None
     screenshot_error: str | None = None

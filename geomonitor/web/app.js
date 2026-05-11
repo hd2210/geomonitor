@@ -24,6 +24,7 @@ function bindEvents() {
   $("closeDialog").addEventListener("click", () => $("answerDialog").close());
   $("configQuestionsText").addEventListener("input", syncQuestionsFromText);
   $("addKeywordButton").addEventListener("click", addKeyword);
+  $("addModelButton").addEventListener("click", addModel);
   $("saveConfigButton").addEventListener("click", saveConfig);
   $("startRunButton").addEventListener("click", startRun);
   document.querySelectorAll(".primary-nav-item").forEach((button) => {
@@ -190,9 +191,45 @@ function renderConfig() {
   $("configPath").textContent = state.config.config_path;
   $("configQuestionCount").textContent = `${state.config.questions.length} 个问题`;
   $("configKeywordCount").textContent = `${state.config.target_keywords.length} 个关键词`;
+  $("configModelCount").textContent = `${state.config.ai_platforms.length} 个模型`;
   $("configQuestionsText").value = state.config.questions.map((item) => item.question).join("\n");
+  $("configModels").innerHTML = state.config.ai_platforms.map(renderModelEditor).join("");
   $("configKeywords").innerHTML = state.config.target_keywords.map(renderKeywordEditor).join("");
   bindConfigEditors();
+}
+
+function renderModelEditor(platform, index) {
+  return `
+    <div class="config-card model-card" data-model-index="${index}">
+      <div class="field-grid">
+        <label>
+          <span>平台 ID</span>
+          <input class="config-model-id" value="${escapeHtml(platform.platform_id)}" />
+        </label>
+        <button class="danger-button remove-model" title="删除模型">删除</button>
+      </div>
+      <label>
+        <span>显示名称</span>
+        <input class="config-model-name" value="${escapeHtml(platform.platform_name)}" />
+      </label>
+      <label>
+        <span>Model ID，可选择预设或输入自定义模型</span>
+        <input class="config-model-value" list="modelPresets" value="${escapeHtml(platform.model || "")}" />
+      </label>
+      <label>
+        <span>API Base URL</span>
+        <input class="config-model-api-url" value="${escapeHtml(platform.api_base_url || "")}" placeholder="https://api.modelverse.cn/v1/chat/completions" />
+      </label>
+      <label class="checkbox-field">
+        <input class="config-model-web-search" type="checkbox" ${platform.web_search !== false ? "checked" : ""} />
+        <span>开启 web_search</span>
+      </label>
+      <label>
+        <span>Web Search Vendor，可留空使用默认</span>
+        <input class="config-model-web-vendor" value="${escapeHtml(platform.web_search_vendor || "")}" placeholder="默认 vendor" />
+      </label>
+    </div>
+  `;
 }
 
 function renderKeywordEditor(keyword, index) {
@@ -221,6 +258,34 @@ function bindConfigEditors() {
       renderConfig();
     });
   });
+  document.querySelectorAll(".remove-model").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.closest("[data-model-index]").dataset.modelIndex);
+      state.config.ai_platforms.splice(index, 1);
+      renderConfig();
+    });
+  });
+  document.querySelectorAll("[data-model-index]").forEach((card) => {
+    const index = Number(card.dataset.modelIndex);
+    card.querySelector(".config-model-id").addEventListener("input", (event) => {
+      state.config.ai_platforms[index].platform_id = event.target.value;
+    });
+    card.querySelector(".config-model-name").addEventListener("input", (event) => {
+      state.config.ai_platforms[index].platform_name = event.target.value;
+    });
+    card.querySelector(".config-model-value").addEventListener("input", (event) => {
+      state.config.ai_platforms[index].model = event.target.value;
+    });
+    card.querySelector(".config-model-api-url").addEventListener("input", (event) => {
+      state.config.ai_platforms[index].api_base_url = event.target.value;
+    });
+    card.querySelector(".config-model-web-search").addEventListener("change", (event) => {
+      state.config.ai_platforms[index].web_search = event.target.checked;
+    });
+    card.querySelector(".config-model-web-vendor").addEventListener("input", (event) => {
+      state.config.ai_platforms[index].web_search_vendor = event.target.value;
+    });
+  });
   document.querySelectorAll("[data-keyword-index]").forEach((card) => {
     const index = Number(card.dataset.keywordIndex);
     card.querySelector(".config-keyword-name").addEventListener("input", (event) => {
@@ -234,6 +299,20 @@ function bindConfigEditors() {
 
 function addKeyword() {
   state.config.target_keywords.push({ keyword: "", aliases: [] });
+  renderConfig();
+}
+
+function addModel() {
+  const nextNumber = state.config.ai_platforms.length + 1;
+  state.config.ai_platforms.push({
+    platform_id: `model_${nextNumber}`,
+    platform_name: `Model ${nextNumber}`,
+    method: "api",
+    model: "",
+    api_base_url: "https://api.modelverse.cn/v1/chat/completions",
+    web_search: true,
+    web_search_vendor: "",
+  });
   renderConfig();
 }
 
@@ -271,6 +350,15 @@ function collectConfigPayload() {
     target_keywords: state.config.target_keywords.map((item) => ({
       keyword: item.keyword.trim(),
       aliases: item.aliases || [],
+    })),
+    ai_platforms: state.config.ai_platforms.map((item) => ({
+      platform_id: item.platform_id.trim(),
+      platform_name: item.platform_name.trim(),
+      method: "api",
+      model: (item.model || "").trim(),
+      api_base_url: (item.api_base_url || "").trim(),
+      web_search: item.web_search !== false,
+      web_search_vendor: (item.web_search_vendor || "").trim(),
     })),
   };
 }
@@ -366,11 +454,14 @@ function openAnswer(answer) {
       return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
     })
     .join("");
-  if (answer.screenshot_path) {
+  if (answer.raw_response_path) {
+    const src = `/runs/${encodeURIComponent(state.currentRunId)}/${answer.raw_response_path}`;
+    $("dialogScreenshot").innerHTML = `<a class="screenshot-link" href="${src}" target="_blank" rel="noreferrer">打开 API 原始 JSON</a>`;
+  } else if (answer.screenshot_path) {
     const src = `/runs/${encodeURIComponent(state.currentRunId)}/${answer.screenshot_path}`;
     $("dialogScreenshot").innerHTML = `<a class="screenshot-link" href="${src}" target="_blank" rel="noreferrer">打开截图原图</a><img src="${src}" alt="Answer screenshot" />`;
   } else {
-    $("dialogScreenshot").innerHTML = '<span class="eyebrow">No screenshot saved</span>';
+    $("dialogScreenshot").innerHTML = '<span class="eyebrow">No raw response saved</span>';
   }
   $("answerDialog").showModal();
 }

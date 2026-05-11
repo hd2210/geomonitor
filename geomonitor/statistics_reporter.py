@@ -206,7 +206,7 @@ class StatisticsReporter:
                     f"| {failure.platform_id} | {failure.question_id} | {failure.status} | {(failure.error_message or '').replace('|', '/')} |"
                 )
 
-        lines.extend(["", "## Output Files", "", "- `raw_answers.jsonl`", "- `keyword_analysis.jsonl`", "- `platform_summary.csv`", "- `global_summary.csv`", "- `screenshots/`", "- `html/`"])
+        lines.extend(["", "## Output Files", "", "- `raw_answers.jsonl`", "- `keyword_analysis.jsonl`", "- `platform_summary.csv`", "- `global_summary.csv`", "- `api_responses/`"])
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

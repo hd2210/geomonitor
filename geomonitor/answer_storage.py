@@ -13,6 +13,7 @@ class AnswerStorage:
         self.run_dir = Path(run_dir)
         self.screenshots_dir = self.run_dir / "screenshots"
         self.html_dir = self.run_dir / "html"
+        self.api_responses_dir = self.run_dir / "api_responses"
         self.raw_answers_path = self.run_dir / "raw_answers.jsonl"
         self.keyword_analysis_path = self.run_dir / "keyword_analysis.jsonl"
 
@@ -20,6 +21,7 @@ class AnswerStorage:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.screenshots_dir.mkdir(parents=True, exist_ok=True)
         self.html_dir.mkdir(parents=True, exist_ok=True)
+        self.api_responses_dir.mkdir(parents=True, exist_ok=True)
 
     def answer_paths(self, platform_id: str, question_id: str) -> tuple[Path, Path]:
         safe_platform = _safe_name(platform_id)
@@ -27,6 +29,11 @@ class AnswerStorage:
         screenshot_path = self.screenshots_dir / f"{safe_platform}_{safe_question}.png"
         html_path = self.html_dir / f"{safe_platform}_{safe_question}.html"
         return screenshot_path, html_path
+
+    def api_response_path(self, platform_id: str, question_id: str) -> Path:
+        safe_platform = _safe_name(platform_id)
+        safe_question = _safe_name(question_id)
+        return self.api_responses_dir / f"{safe_platform}_{safe_question}.json"
 
     def write_answer(self, record: AnswerRecord) -> None:
         self._append_jsonl(self.raw_answers_path, _without_none(asdict(record)))
@@ -54,7 +61,9 @@ def read_raw_answers(path: str | Path) -> list[AnswerRecord]:
     with Path(path).open("r", encoding="utf-8") as handle:
         for line in handle:
             if line.strip():
-                records.append(AnswerRecord(**json.loads(line)))
+                payload = json.loads(line)
+                allowed = AnswerRecord.__dataclass_fields__.keys()
+                records.append(AnswerRecord(**{key: value for key, value in payload.items() if key in allowed}))
     return records
 
 

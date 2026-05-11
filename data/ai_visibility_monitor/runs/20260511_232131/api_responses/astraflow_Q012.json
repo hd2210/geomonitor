@@ -1,0 +1,48 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "annotations": [],
+        "content": "If you're buying tools for the first time, the right brand depends on your budget and what kind of projects you expect to tackle. Here are straightforward recommendations:\n\n**Best all‑around for beginners**\n- **Ryobi**  \n  Affordable, reliable, and has a huge line of tools that all run on the same batteries. Great for homeowners and DIY beginners.\n\n**If you want something a little higher‑end but still beginner‑friendly**\n- **DeWalt**  \n  More expensive than Ryobi but very durable, powerful, and widely supported. Good if you expect to grow into more serious projects.\n- **Makita**  \n  Smooth, high‑quality tools that often feel more refined than DeWalt for a similar price.\n\n**If budget is the top priority**\n- **Harbor Freight (Bauer or Hercules lines)**  \n  Very inexpensive and surprisingly capable for light to medium use.\n\n**If you want the best performance and think you’ll eventually do heavy-duty work**\n- **Milwaukee**  \n  Excellent performance, especially in cordless tools. Costs more, but you won’t outgrow the system.\n\nIf you're totally new and just want something reliable without spending too much, Ryobi is usually the safest place to start.",
+        "refusal": null,
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778512990,
+  "id": "chatcmpl-DeMlKzZzb6LLI2J3s2oSiCv21Vt6f",
+  "model": "gpt-5.1-chat",
+  "object": "chat.completion",
+  "service_tier": "default",
+  "system_fingerprint": null,
+  "u_trace_id": "e16fa920-6b0e-4c07-b6a2-28530c386957",
+  "usage": {
+    "completion_tokens": 260,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "latency_checkpoint": {
+      "engine_tbt_ms": 10,
+      "engine_ttft_ms": 38,
+      "engine_ttlt_ms": 2843,
+      "pre_inference_ms": 158,
+      "service_tbt_ms": 10,
+      "service_ttft_ms": 262,
+      "service_ttlt_ms": 3082,
+      "total_duration_ms": 2933,
+      "user_visible_ttft_ms": 104
+    },
+    "prompt_tokens": 21,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    },
+    "total_tokens": 281
+  }
+}

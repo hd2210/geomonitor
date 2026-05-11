@@ -212,9 +212,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("Config payload must be an object.")
         questions = _validate_questions(payload.get("questions"))
         keywords = _validate_keywords(payload.get("target_keywords"))
+        platforms = _validate_platforms(payload.get("ai_platforms"))
         config = _read_json_file(self.config_path)
         config["questions"] = questions
         config["target_keywords"] = keywords
+        config["ai_platforms"] = platforms
         parse_config(config)
         self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -365,3 +367,38 @@ def _validate_keywords(value) -> list[dict]:
     if not keywords:
         raise ValueError("At least one keyword is required.")
     return keywords
+
+
+def _validate_platforms(value) -> list[dict]:
+    if not isinstance(value, list):
+        raise ValueError("ai_platforms must be a list.")
+    seen: set[str] = set()
+    platforms: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("Each platform must be an object.")
+        platform_id = str(item.get("platform_id", "")).strip()
+        platform_name = str(item.get("platform_name", "")).strip()
+        model = str(item.get("model", "")).strip()
+        if not platform_id or not platform_name or not model:
+            raise ValueError("Platform ID, name, and model are required.")
+        if platform_id in seen:
+            raise ValueError(f"Duplicate platform_id: {platform_id}")
+        seen.add(platform_id)
+        platform = {
+            "platform_id": platform_id,
+            "platform_name": platform_name,
+            "method": "api",
+            "model": model,
+            "web_search": bool(item.get("web_search", True)),
+        }
+        api_base_url = str(item.get("api_base_url", "")).strip()
+        web_search_vendor = str(item.get("web_search_vendor", "")).strip()
+        if api_base_url:
+            platform["api_base_url"] = api_base_url
+        if web_search_vendor:
+            platform["web_search_vendor"] = web_search_vendor
+        platforms.append(platform)
+    if not platforms:
+        raise ValueError("At least one model/platform is required.")
+    return platforms

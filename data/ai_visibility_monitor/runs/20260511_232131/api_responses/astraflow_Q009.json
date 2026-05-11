@@ -1,0 +1,48 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "annotations": [],
+        "content": "For apartment maintenance and occasional DIY work, you generally want tools that are:\n\n• Reliable  \n• Affordable  \n• Not overly heavy-duty  \n• Widely available  \n• Compatible within one battery system (if going cordless)\n\nPractical, good‑value brands for this level of use:\n\n• Ryobi – One of the best choices for apartment DIY. Huge 18V tool ecosystem, good quality for the price, and very accessible for beginners.  \n• Craftsman – Solid mid‑range option, decent performance, and reasonably priced.  \n• Black+Decker – Budget‑friendly and perfectly fine for light home tasks.  \n• Skill/Skil – Good quality at an affordable price, especially their cordless tools.  \n\nIf you want something a bit more premium but still not “contractor expensive”:\n\n• Makita (CXT line) – Lighter and compact, great for indoor/apartment work.  \n• DeWalt – High quality, rugged, and long‑lasting, though usually more expensive than you need for occasional DIY.\n\nTypical setup for an apartment:\n\n• Cordless drill/driver  \n• Small impact driver (optional but helpful)  \n• Multipurpose hand tools (screwdrivers, pliers, utility knife)  \n• Stud finder  \n• Measuring tape  \n• Compact tool bag  \n\nBest all‑around pick for most people: Ryobi 18V One+ — strong value, easy to use, and tools for almost anything you’ll ever do in an apartment.\n\nIf you want, I can suggest a starter kit based on your budget.",
+        "refusal": null,
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778512965,
+  "id": "chatcmpl-DeMkvJaFfGNDu4dLynjKqMcr4cO1L",
+  "model": "gpt-5.1-chat",
+  "object": "chat.completion",
+  "service_tier": "default",
+  "system_fingerprint": null,
+  "u_trace_id": "c53dfba8-471c-4359-9e3e-db385f2d2383",
+  "usage": {
+    "completion_tokens": 324,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "latency_checkpoint": {
+      "engine_tbt_ms": 12,
+      "engine_ttft_ms": 68,
+      "engine_ttlt_ms": 4000,
+      "pre_inference_ms": 183,
+      "service_tbt_ms": 12,
+      "service_ttft_ms": 497,
+      "service_ttlt_ms": 4399,
+      "total_duration_ms": 4224,
+      "user_visible_ttft_ms": 314
+    },
+    "prompt_tokens": 19,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    },
+    "total_tokens": 343
+  }
+}

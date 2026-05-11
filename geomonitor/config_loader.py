@@ -122,16 +122,29 @@ def _parse_platforms(value: Any) -> list[AIPlatform]:
             raise ConfigError(f"Duplicate platform_id: {platform_id}")
         seen.add(platform_id)
         method = item.get("method", "browser")
-        if method != "browser":
+        if method not in {"browser", "api"}:
             raise ConfigError(f"Unsupported platform method for {platform_id}: {method}")
         selectors = _parse_selectors(item.get("selectors", {}))
+        url = item.get("url")
+        if method == "browser":
+            if not isinstance(url, str) or not url.strip():
+                raise ConfigError(f"Browser platform {platform_id} requires url.")
+            model = None
+        else:
+            model = _required_str(item, "model")
+            if url is not None and not isinstance(url, str):
+                raise ConfigError(f"Platform url for {platform_id} must be a string when provided.")
         platforms.append(
             AIPlatform(
                 platform_id=platform_id,
                 platform_name=_required_str(item, "platform_name"),
-                url=_required_str(item, "url"),
-                method="browser",
+                url=url.strip() if isinstance(url, str) and url.strip() else None,
+                method=method,
                 selectors=selectors,
+                model=model,
+                api_base_url=_optional_str(item, "api_base_url"),
+                web_search=bool(item.get("web_search", True)),
+                web_search_vendor=_optional_str(item, "web_search_vendor"),
             )
         )
     return platforms
@@ -187,4 +200,13 @@ def _required_str(data: dict[str, Any], key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"Missing required string field: {key}")
+    return value.strip()
+
+
+def _optional_str(data: dict[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"Field must be a non-empty string when provided: {key}")
     return value.strip()

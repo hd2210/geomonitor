@@ -5,6 +5,7 @@ import asyncio
 from pathlib import Path
 
 from .ai_platform_runner import AIPlatformRunner
+from .astraflow_runner import AstraFlowRunner
 from .answer_storage import AnswerStorage, read_raw_answers
 from .config_loader import load_config
 from .keyword_analyzer import KeywordAnalyzer
@@ -64,16 +65,21 @@ async def run_once(config_path: str, run_id: str | None = None) -> Path:
     storage = AnswerStorage(run_dir)
     storage.prepare()
 
-    runner = AIPlatformRunner(config.runner)
+    browser_runner = AIPlatformRunner(config.runner)
+    api_runner = AstraFlowRunner(config.runner)
     analyzer = KeywordAnalyzer(config.target_keywords)
     answers: list[AnswerRecord] = []
     analyses: list[KeywordAnalysisRecord] = []
 
     for platform_index, platform in enumerate(config.ai_platforms):
         for question_index, question in enumerate(config.questions):
-            screenshot_path, html_path = storage.answer_paths(platform.platform_id, question.question_id)
             print(f"[{current_run_id}] {platform.platform_id}/{question.question_id}: asking")
-            record = await runner.run_question(current_run_id, platform, question, screenshot_path, html_path)
+            if platform.method == "api":
+                raw_response_path = storage.api_response_path(platform.platform_id, question.question_id)
+                record = await api_runner.run_question(current_run_id, platform, question, raw_response_path)
+            else:
+                screenshot_path, html_path = storage.answer_paths(platform.platform_id, question.question_id)
+                record = await browser_runner.run_question(current_run_id, platform, question, screenshot_path, html_path)
             storage.write_answer(record)
             answers.append(record)
 
@@ -89,7 +95,10 @@ async def run_once(config_path: str, run_id: str | None = None) -> Path:
 
             is_last = platform_index == len(config.ai_platforms) - 1 and question_index == len(config.questions) - 1
             if not is_last:
-                await runner.random_delay()
+                if platform.method == "api":
+                    await api_runner.random_delay()
+                else:
+                    await browser_runner.random_delay()
 
     reporter = StatisticsReporter(current_run_id, config.ai_platforms, config.target_keywords)
     reporter.write_outputs(run_dir, answers, analyses)

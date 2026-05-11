@@ -1,0 +1,48 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "annotations": [],
+        "content": "Here are some solid, reasonably priced alternatives to high‑end professional tool brands, along with what they tend to be good for. These are great for home use, DIY projects, and even light professional work.\n\nPower tools (drills, saws, etc.)  \n- Ryobi: Very good value, huge 18V ONE+ ecosystem, widely available. Great for homeowners.  \n- Craftsman (newer lines): Decent quality, solid warranty, improved since Stanley Black & Decker acquired the brand.  \n- Skil: Surprisingly good performance for the price; their brushless tools are especially strong values.  \n- Kobalt: Lowe’s house brand; good mix of affordability and durability.  \n- Hart: Walmart’s house brand; good for basic home use but not as strong as Ryobi or Kobalt.\n\nHand tools (wrenches, sockets, screwdrivers)  \n- Husky: Home Depot brand; good reliability and excellent lifetime warranties.  \n- Craftsman: Still very dependable for hand tools, good warranty, widely supported.  \n- Tekton: A standout for quality‑per‑dollar; great for sockets, wrenches, and screwdriver sets.  \n- Pittsburgh (Harbor Freight): Extremely affordable; great for tools you won’t use often or might abuse.\n\nOutdoor tools (mowers, trimmers, chainsaws)  \n- Ego: Not the cheapest, but fantastic battery performance—much cheaper than pro-grade Stihl/Husqvarna.  \n- Greenworks: Affordable battery outdoor tools, good for typical yards.  \n- Ryobi Outdoor: Good battery tools that work with the same ONE+ system.\n\nWorkbenches, storage, and accessories  \n- Gladiator: Durable and affordable – great for garage storage.  \n- Husky Cabinets: Lower price than pro-level brands with very solid build.  \n- Harbor Freight’s US General: Great bang‑for‑buck tool chests, often compared favorably to Snap‑On for hobby use.\n\nAir tools and shop equipment  \n- Central Pneumatic / Central Machinery (Harbor Freight): Good for occasional use and significantly cheaper than pro-level.  \n- Bauer (Harbor Freight): Good mid‑tier alternative for sanders, grinders, and polishers.\n\nIf you tell me which professional brands you were considering (like DeWalt, Milwaukee, Snap‑On, Stihl, etc.) and what tasks you need tools for, I can give more targeted alternatives.",
+        "refusal": null,
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778512997,
+  "id": "chatcmpl-DeMlRplkp23xTaR5qEpT3erNs7pVR",
+  "model": "gpt-5.1-chat",
+  "object": "chat.completion",
+  "service_tier": "default",
+  "system_fingerprint": null,
+  "u_trace_id": "95c04669-0634-4337-8ee0-62ac6afec1b1",
+  "usage": {
+    "completion_tokens": 506,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "latency_checkpoint": {
+      "engine_tbt_ms": 11,
+      "engine_ttft_ms": 45,
+      "engine_ttlt_ms": 5765,
+      "pre_inference_ms": 105,
+      "service_tbt_ms": 11,
+      "service_ttft_ms": 339,
+      "service_ttlt_ms": 6059,
+      "total_duration_ms": 5962,
+      "user_visible_ttft_ms": 234
+    },
+    "prompt_tokens": 20,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0
+    },
+    "total_tokens": 526
+  }
+}

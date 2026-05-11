@@ -1,0 +1,23 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "flag": 0,
+      "index": 0,
+      "message": {
+        "content": "For affordable tools that still feel solid and reliable, **Ryobi** is often the top recommendation for homeowners and DIYers. Here’s why:\n\n### Top Picks:\n1. **Ryobi (One+ System)** – Excellent value, huge range of tools that all use the same batteries, decent durability for non-professional use.\n2. **Hart (Walmart brand)** – Made by the same parent company as Ryobi/Milwaukee, very affordable with good performance for basic tasks.\n3. **Kobalt (Lowe’s brand)** – Solid quality, good warranties, often praised for their hand tools and mid-range power tools.\n4. **Skil** – Known for decent power tools at budget prices, especially their cordless drills and saws.\n\n### If you can stretch your budget slightly:\n- **Ridgid** – Lifetime warranty on many tools (including batteries if registered), a noticeable step up in durability.\n- **Makita (entry-level)** – Occasionally on sale; professional-grade reliability at near-budget prices for some items.\n\n### What to avoid:\n- Ultra-cheap no-name brands (e.g., random Amazon brands) – they often feel flimsy and break quickly.\n- Older/used professional brands (like worn-out DeWalt or Milwaukee) unless you know they’ve been lightly used.\n\n### Tip:\n- Stick to **one battery ecosystem** (like Ryobi’s One+) to save money long-term.\n- Check reviews for specific tools—sometimes a brand’s drill is great, but their saw might be weaker.\n\nFor most DIY needs, **Ryobi** hits the sweet spot of affordability, reliability, and tool variety.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1778513642,
+  "id": "as-f8w7j170y1",
+  "model": "deepseek-ai/DeepSeek-V3.1",
+  "object": "chat.completion",
+  "u_trace_id": "6d0b39d1-082d-4bbb-8dcc-16208790d45a",
+  "usage": {
+    "completion_tokens": 342,
+    "prompt_tokens": 28,
+    "total_tokens": 370
+  }
+}
