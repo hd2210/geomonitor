@@ -3,7 +3,7 @@
   "questions": [
     {
       "question_id": "Q001",
-      "question": "What tool brands are good for basic home repairs and small DIY projects?"
+      "question": "什么品牌的油炒菜比较好？"
     }
   ],
   "target_keywords": [
@@ -164,6 +164,8 @@
     "browser_executable_path": null,
     "browser_cdp_url": null,
     "viewport_width": 1440,
-    "viewport_height": 1200
+    "viewport_height": 1200,
+    "pause_on_blocked_seconds": 20,
+    "profile_lock_wait_seconds": 60
   }
 }

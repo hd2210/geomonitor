@@ -13,7 +13,7 @@ def _generic_selectors() -> dict[str, str]:
         "answer_item": "[data-message-author-role='assistant'] || .markdown || .answer || .message",
         "stop_generating": "button[aria-label*='Stop'] || button[aria-label*='停止'] || [data-auto-test='stop_response'] || .stopDealBtn",
         "login_indicator": "text=/登录|登陆|Sign in|Log in/i",
-        "blocked_indicator": "text=/验证码|验证|风控|安全检查|安全审核|内容安全|风险提示|verify|Cloudflare/i",
+        "blocked_indicator": "text=/验证码|请验证您是真人|正在检查您是否是真人|风控|安全检查|安全审核|内容安全|风险提示|verify you are human|Cloudflare/i",
     }
 
 
@@ -89,8 +89,13 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
         "new_chat_url": "https://yuanbao.tencent.com/",
         "selectors": {
             **_generic_selectors(),
+            "new_chat": (
+                "button[aria-label*='新建'] || button[title*='新建'] || "
+                "[aria-label*='新建'] || [title*='新建'] || "
+                "text=新建对话 || text=新对话"
+            ),
             "input": "#search-bar .ql-editor || .ql-editor[contenteditable='true'] || [contenteditable='true'] || textarea",
-            "submit": "#yuanbao-send-btn || a[id*='send'] || button[aria-label*='发送']",
+            "submit": "#yuanbao-send-btn:not([class*='disabled']) || a[id*='send']:not([class*='disabled']) || button[aria-label*='发送']:not([disabled])",
             "answer_item": ".agent-chat__conv--ai || [class*='conv--ai'] || #answer_text_id || [class*='markdown']",
             "stop_generating": "[data-auto-test='stop_response'] || .stopDealBtn || [class*='stop']",
         },

@@ -206,6 +206,10 @@ def _parse_runner(value: Any) -> RunnerConfig:
         raise ConfigError("runner.timeout_seconds must be positive.")
     if runner.min_delay_seconds < 0 or runner.max_delay_seconds < runner.min_delay_seconds:
         raise ConfigError("runner delay range is invalid.")
+    if runner.pause_on_blocked_seconds < 0:
+        raise ConfigError("runner.pause_on_blocked_seconds cannot be negative.")
+    if runner.profile_lock_wait_seconds < 0:
+        raise ConfigError("runner.profile_lock_wait_seconds cannot be negative.")
     return runner
 
 
