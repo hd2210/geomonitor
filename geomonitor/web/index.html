@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI Visibility Monitor</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=browser-login-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -165,7 +165,31 @@
             <option value="zai-org/glm-4.6">GLM 4.6</option>
           </datalist>
 
-          <section class="panel model-config-panel">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>查询方式</h3>
+                <p class="panel-note">本次运行所有请求只会使用一种方式。默认使用浏览器模式。</p>
+              </div>
+            </div>
+            <div class="mode-switch">
+              <label><input type="radio" name="runMode" value="browser" /> 浏览器网站</label>
+              <label><input type="radio" name="runMode" value="api" /> 接口 API</label>
+            </div>
+          </section>
+
+          <section id="browserConfigPanel" class="panel model-config-panel">
+            <div class="panel-header">
+              <div>
+                <h3>AI 网站配置</h3>
+                <p id="configWebsiteCount" class="panel-note"></p>
+              </div>
+            </div>
+            <pre id="loginLog" class="run-log compact-log">登录准备日志会显示在这里。点击某个网站的“准备登录”后，请手动登录并关闭弹出的浏览器窗口。</pre>
+            <div id="configWebsites" class="model-grid"></div>
+          </section>
+
+          <section id="apiConfigPanel" class="panel model-config-panel">
             <div class="panel-header">
               <div>
                 <h3>模型配置</h3>
@@ -216,7 +240,7 @@
             <div class="panel-header">
               <div>
                 <h3>运行任务</h3>
-                <p class="panel-note">使用当前配置立即执行一次 API 监测。请先在 .env 中配置 ASTRAFLOW_API_KEY。</p>
+                <p class="panel-note">使用当前配置立即执行一次监测。浏览器模式会使用已准备好的 Playwright Chromium 登录状态。</p>
               </div>
               <button id="startRunButton" class="primary-button">开始运行</button>
             </div>
@@ -257,6 +281,6 @@
       </div>
     </dialog>
 
-    <script src="/app.js"></script>
+    <script src="/app.js?v=browser-login-2"></script>
   </body>
 </html>

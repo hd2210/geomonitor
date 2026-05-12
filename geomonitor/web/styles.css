@@ -375,6 +375,22 @@ textarea {
   margin-bottom: 18px;
 }
 
+.mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mode-switch label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
 .model-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -398,6 +414,18 @@ textarea {
 .config-card label {
   display: grid;
   gap: 6px;
+}
+
+.config-card details {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.config-card summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  margin-bottom: 10px;
 }
 
 .config-card label span,
@@ -498,6 +526,11 @@ textarea {
   background: #101828;
   color: #e5e7eb;
   border-color: #101828;
+}
+
+.compact-log {
+  max-height: 160px;
+  margin-bottom: 16px;
 }
 
 .answer-card button {

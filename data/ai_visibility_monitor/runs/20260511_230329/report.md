@@ -1,13 +1,15 @@
 # AI Visibility Monitor Report
 
 - Run ID: `20260511_230329`
-- Platforms: 3
+- Platforms: 5
 - Questions executed: 45
 - Successful answers: 0
 - Keywords: 10
 
 ## Platforms
 
+- `chatgpt`: ChatGPT
+- `gemini`: Gemini
 - `astraflow`: chatgpt
 - `model_2`: gemini
 - `model_3`: deepseek
@@ -31,6 +33,26 @@
 
 | Platform | Keyword | Appeared | Total | Rate | Avg Rank | Best Rank | Missed |
 |---|---|---:|---:|---:|---:|---:|---:|
+| chatgpt | deli | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Ryobi | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Craftsman | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | DeWalt | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Milwaukee | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Kobalt | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Tekton | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Husky | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Bauer | 0 | 0 | 0.00% |  |  | 0 |
+| chatgpt | Makita | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | deli | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Ryobi | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Craftsman | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | DeWalt | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Milwaukee | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Kobalt | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Tekton | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Husky | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Bauer | 0 | 0 | 0.00% |  |  | 0 |
+| gemini | Makita | 0 | 0 | 0.00% |  |  | 0 |
 | astraflow | deli | 0 | 0 | 0.00% |  |  | 0 |
 | astraflow | Ryobi | 0 | 0 | 0.00% |  |  | 0 |
 | astraflow | Craftsman | 0 | 0 | 0.00% |  |  | 0 |

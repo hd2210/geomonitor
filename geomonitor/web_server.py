@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .answer_storage import read_raw_answers
 from .config_loader import ConfigError, parse_config
+from .platform_templates import browser_platform_defaults
 
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -65,8 +66,41 @@ class RunJobState:
             self.lines.append(f"Run finished with exit code {return_code}.")
 
 
+class LoginJobState(RunJobState):
+    def start(self, config_path: Path, platform_id: str) -> None:  # type: ignore[override]
+        with self.lock:
+            if self.running:
+                raise ValueError("A login preparation browser is already open.")
+            self.running = True
+            self.return_code = None
+            self.lines = [f"Opening login browser for {platform_id}..."]
+        thread = threading.Thread(target=self._worker, args=(config_path, platform_id), daemon=True)
+        thread.start()
+
+    def _worker(self, config_path: Path, platform_id: str) -> None:  # type: ignore[override]
+        command = [sys.executable, "-m", "geomonitor.cli", "login", "--config", str(config_path), "--platform-id", platform_id]
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            with self.lock:
+                self.lines.append(line.rstrip())
+        return_code = process.wait()
+        with self.lock:
+            self.return_code = return_code
+            self.running = False
+            self.lines.append(f"Login preparation finished with exit code {return_code}.")
+
+
 def serve_dashboard(host: str, port: int, runs_dir: str | Path, config_path: str | Path) -> None:
     run_state = RunJobState()
+    login_state = LoginJobState()
     server = ThreadingHTTPServer(
         (host, port),
         lambda *args: DashboardHandler(
@@ -74,6 +108,7 @@ def serve_dashboard(host: str, port: int, runs_dir: str | Path, config_path: str
             runs_dir=Path(runs_dir),
             config_path=Path(config_path),
             run_state=run_state,
+            login_state=login_state,
         ),
     )
     print(f"Dashboard running at http://{host}:{port}")
@@ -83,10 +118,11 @@ def serve_dashboard(host: str, port: int, runs_dir: str | Path, config_path: str
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    def __init__(self, *args, runs_dir: Path, config_path: Path, run_state: RunJobState) -> None:
+    def __init__(self, *args, runs_dir: Path, config_path: Path, run_state: RunJobState, login_state: LoginJobState) -> None:
         self.runs_dir = runs_dir
         self.config_path = config_path
         self.run_state = run_state
+        self.login_state = login_state
         super().__init__(*args)
 
     def do_GET(self) -> None:  # noqa: N802
@@ -105,6 +141,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/run-status":
                 self._json(self.run_state.snapshot())
+                return
+            if path == "/api/login-status":
+                self._json(self.login_state.snapshot())
                 return
             if path.startswith("/runs/"):
                 self._serve_run_asset(path)
@@ -129,6 +168,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/run-now":
                 parse_config(_read_json_file(self.config_path))
                 self.run_state.start(self.config_path)
+                self._json({"status": "started"})
+                return
+            if path == "/api/login-prepare":
+                payload = self._read_json_body()
+                platform_id = str(payload.get("platform_id", "")).strip()
+                if not platform_id:
+                    raise ValueError("platform_id is required.")
+                parse_config(_read_json_file(self.config_path))
+                self.login_state.start(self.config_path, platform_id)
                 self._json({"status": "started"})
                 return
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
@@ -200,9 +248,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         config = _read_json_file(self.config_path)
         return {
             "config_path": str(self.config_path),
+            "run_mode": config.get("run_mode", "browser"),
             "questions": config.get("questions", []),
             "target_keywords": _normalize_keywords(config.get("target_keywords", [])),
-            "ai_platforms": config.get("ai_platforms", []),
+            "browser_platforms": config.get("browser_platforms") or browser_platform_defaults(),
+            "api_platforms": config.get("api_platforms") or [p for p in config.get("ai_platforms", []) if isinstance(p, dict) and p.get("method") == "api"],
             "schedule": config.get("schedule"),
             "runner": config.get("runner", {}),
         }
@@ -212,11 +262,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("Config payload must be an object.")
         questions = _validate_questions(payload.get("questions"))
         keywords = _validate_keywords(payload.get("target_keywords"))
-        platforms = _validate_platforms(payload.get("ai_platforms"))
+        run_mode = str(payload.get("run_mode", "browser")).strip()
+        if run_mode not in {"browser", "api"}:
+            raise ValueError("run_mode must be browser or api.")
+        browser_platforms = _validate_browser_platforms(payload.get("browser_platforms"))
+        api_platforms = _validate_api_platforms(payload.get("api_platforms"))
         config = _read_json_file(self.config_path)
+        config["run_mode"] = run_mode
         config["questions"] = questions
         config["target_keywords"] = keywords
-        config["ai_platforms"] = platforms
+        config["browser_platforms"] = browser_platforms
+        config["api_platforms"] = api_platforms
+        config.pop("ai_platforms", None)
         parse_config(config)
         self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -369,7 +426,7 @@ def _validate_keywords(value) -> list[dict]:
     return keywords
 
 
-def _validate_platforms(value) -> list[dict]:
+def _validate_api_platforms(value) -> list[dict]:
     if not isinstance(value, list):
         raise ValueError("ai_platforms must be a list.")
     seen: set[str] = set()
@@ -389,6 +446,7 @@ def _validate_platforms(value) -> list[dict]:
             "platform_id": platform_id,
             "platform_name": platform_name,
             "method": "api",
+            "enabled": bool(item.get("enabled", True)),
             "model": model,
             "web_search": bool(item.get("web_search", True)),
         }
@@ -399,6 +457,41 @@ def _validate_platforms(value) -> list[dict]:
         if web_search_vendor:
             platform["web_search_vendor"] = web_search_vendor
         platforms.append(platform)
-    if not platforms:
-        raise ValueError("At least one model/platform is required.")
+    return platforms
+
+
+def _validate_browser_platforms(value) -> list[dict]:
+    if not isinstance(value, list):
+        raise ValueError("browser_platforms must be a list.")
+    seen: set[str] = set()
+    platforms: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("Each browser platform must be an object.")
+        platform_id = str(item.get("platform_id", "")).strip()
+        platform_name = str(item.get("platform_name", "")).strip()
+        url = str(item.get("url", "")).strip()
+        if not platform_id or not platform_name or not url:
+            raise ValueError("Browser platform ID, name, and URL are required.")
+        if platform_id in seen:
+            raise ValueError(f"Duplicate platform_id: {platform_id}")
+        seen.add(platform_id)
+        platform: dict[str, object] = {
+            "platform_id": platform_id,
+            "platform_name": platform_name,
+            "url": url,
+            "method": "browser",
+            "enabled": bool(item.get("enabled", False)),
+        }
+        new_chat_url = str(item.get("new_chat_url", "")).strip()
+        if new_chat_url:
+            platform["new_chat_url"] = new_chat_url
+        selectors = item.get("selectors")
+        if isinstance(selectors, dict):
+            platform["selectors"] = {
+                key: str(value).strip()
+                for key, value in selectors.items()
+                if value is not None and str(value).strip()
+            }
+        platforms.append(platform)
     return platforms

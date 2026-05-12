@@ -1,64 +1,9 @@
 {
+  "run_mode": "browser",
   "questions": [
     {
       "question_id": "Q001",
       "question": "What tool brands are good for basic home repairs and small DIY projects?"
-    },
-    {
-      "question_id": "Q002",
-      "question": "Which affordable tool brand should I consider for both hand tools and simple power tools?"
-    },
-    {
-      "question_id": "Q003",
-      "question": "What are some reliable tool brands for someone setting up a home toolbox?"
-    },
-    {
-      "question_id": "Q004",
-      "question": "Which brand makes decent screwdrivers, pliers, measuring tapes, and drills for home use?"
-    },
-    {
-      "question_id": "Q005",
-      "question": "What tool brand is worth buying if I need a mix of home tools and garden tools?"
-    },
-    {
-      "question_id": "Q006",
-      "question": "Which tool brands are good for beginners who don’t want to spend too much?"
-    },
-    {
-      "question_id": "Q007",
-      "question": "What are the best value-for-money tools for fixing things around the house?"
-    },
-    {
-      "question_id": "Q008",
-      "question": "Which brand should I look at for a starter kit with hand tools and power tools?"
-    },
-    {
-      "question_id": "Q009",
-      "question": "What tool brand is practical for apartment maintenance and occasional DIY work?"
-    },
-    {
-      "question_id": "Q010",
-      "question": "Which brands make reliable garden tools for regular home use?"
-    },
-    {
-      "question_id": "Q011",
-      "question": "What power tool brands are good enough for household repairs but not too expensive?"
-    },
-    {
-      "question_id": "Q012",
-      "question": "Which tool brand would you recommend for someone buying tools for the first time?"
-    },
-    {
-      "question_id": "Q013",
-      "question": "What are some good alternatives to expensive professional tool brands for home use?"
-    },
-    {
-      "question_id": "Q014",
-      "question": "Which brand offers a good range of tools for home repair, DIY, and gardening?"
-    },
-    {
-      "question_id": "Q015",
-      "question": "What tool brand should I choose if I want affordable tools that still feel solid and reliable?"
     }
   ],
   "target_keywords": [
@@ -108,27 +53,97 @@
       "aliases": []
     }
   ],
-  "ai_platforms": [
+  "browser_platforms": [
     {
-      "platform_id": "astraflow",
-      "platform_name": "chatgpt",
+      "platform_id": "chatgpt",
+      "platform_name": "ChatGPT",
+      "url": "https://chatgpt.com",
+      "method": "browser",
+      "enabled": false,
+      "new_chat_url": "https://chatgpt.com/",
+      "selectors": {}
+    },
+    {
+      "platform_id": "gemini",
+      "platform_name": "Gemini",
+      "url": "https://gemini.google.com/app",
+      "method": "browser",
+      "enabled": false,
+      "selectors": {}
+    },
+    {
+      "platform_id": "deepseek",
+      "platform_name": "DeepSeek",
+      "url": "https://chat.deepseek.com",
+      "method": "browser",
+      "enabled": true,
+      "selectors": {}
+    },
+    {
+      "platform_id": "doubao",
+      "platform_name": "豆包",
+      "url": "https://www.doubao.com/chat/",
+      "method": "browser",
+      "enabled": true,
+      "selectors": {}
+    },
+    {
+      "platform_id": "yuanbao",
+      "platform_name": "腾讯元宝",
+      "url": "https://yuanbao.tencent.com/",
+      "method": "browser",
+      "enabled": true,
+      "selectors": {}
+    },
+    {
+      "platform_id": "tongyi",
+      "platform_name": "通义千问",
+      "url": "https://tongyi.aliyun.com/qianwen/",
+      "method": "browser",
+      "enabled": true,
+      "selectors": {}
+    },
+    {
+      "platform_id": "kimi",
+      "platform_name": "Kimi",
+      "url": "https://www.kimi.com/",
+      "method": "browser",
+      "enabled": true,
+      "selectors": {}
+    },
+    {
+      "platform_id": "wenxin",
+      "platform_name": "文心一言",
+      "url": "https://yiyan.baidu.com/",
+      "method": "browser",
+      "enabled": true,
+      "selectors": {}
+    }
+  ],
+  "api_platforms": [
+    {
+      "platform_id": "chatgpt_api",
+      "platform_name": "ChatGPT API",
       "method": "api",
+      "enabled": true,
       "model": "gpt-5.1-chat",
       "web_search": true,
       "api_base_url": "https://api.modelverse.cn/v1/chat/completions"
     },
     {
-      "platform_id": "gemini",
-      "platform_name": "gemini",
+      "platform_id": "gemini_api",
+      "platform_name": "Gemini API",
       "method": "api",
+      "enabled": true,
       "model": "gemini-2.5-pro",
       "web_search": true,
       "api_base_url": "https://api.modelverse.cn/v1/chat/completions"
     },
     {
-      "platform_id": "deepseek",
-      "platform_name": "deepseek",
+      "platform_id": "deepseek_api",
+      "platform_name": "DeepSeek API",
       "method": "api",
+      "enabled": true,
       "model": "deepseek-ai/DeepSeek-V3.1",
       "web_search": true,
       "api_base_url": "https://api.modelverse.cn/v1/chat/completions"

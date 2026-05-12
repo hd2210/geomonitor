@@ -9,7 +9,7 @@ from .astraflow_runner import AstraFlowRunner
 from .answer_storage import AnswerStorage, read_raw_answers
 from .config_loader import load_config
 from .keyword_analyzer import KeywordAnalyzer
-from .models import AnswerRecord, KeywordAnalysisRecord, make_run_id
+from .models import AIPlatform, AnswerRecord, KeywordAnalysisRecord, make_run_id
 from .scheduler import run_forever
 from .statistics_reporter import StatisticsReporter
 from .web_server import serve_dashboard
@@ -26,6 +26,10 @@ def main() -> None:
     schedule_parser = subparsers.add_parser("schedule", help="Run according to schedule config")
     schedule_parser.add_argument("--config", required=True)
 
+    login_parser = subparsers.add_parser("login", help="Open a browser profile for manual site login")
+    login_parser.add_argument("--config", required=True)
+    login_parser.add_argument("--platform-id", required=True)
+
     analyze_parser = subparsers.add_parser("analyze", help="Analyze an existing run directory")
     analyze_parser.add_argument("--config", required=True)
     analyze_parser.add_argument("--run-dir", required=True)
@@ -41,6 +45,8 @@ def main() -> None:
         asyncio.run(run_once(args.config, run_id=args.run_id))
     elif args.command == "schedule":
         asyncio.run(schedule(args.config))
+    elif args.command == "login":
+        asyncio.run(prepare_login(args.config, args.platform_id))
     elif args.command == "analyze":
         analyze_existing(args.config, args.run_dir)
     elif args.command == "serve":
@@ -56,6 +62,16 @@ async def schedule(config_path: str) -> None:
         await run_once(config_path)
 
     await run_forever(config.schedule, job)
+
+
+async def prepare_login(config_path: str, platform_id: str) -> None:
+    config = load_config(config_path)
+    platforms = {platform.platform_id: platform for platform in config.browser_platforms}
+    platform = platforms.get(platform_id)
+    if platform is None:
+        raise SystemExit(f"Browser platform not found: {platform_id}")
+    runner = AIPlatformRunner(config.runner)
+    await runner.prepare_login(platform)
 
 
 async def run_once(config_path: str, run_id: str | None = None) -> Path:
@@ -119,9 +135,21 @@ def analyze_existing(config_path: str, run_dir: str) -> None:
     storage = AnswerStorage(run_path)
     storage.prepare()
     storage.rewrite_keyword_analysis(analyses)
-    reporter = StatisticsReporter(run_id, config.ai_platforms, config.target_keywords)
+    reporter = StatisticsReporter(run_id, _platforms_for_answers(config.ai_platforms, answers), config.target_keywords)
     reporter.write_outputs(run_path, answers, analyses)
     print(f"Analysis complete: {run_path}")
+
+
+def _platforms_for_answers(config_platforms, answers: list[AnswerRecord]) -> tuple[AIPlatform, ...]:
+    platforms = {platform.platform_id: platform for platform in config_platforms}
+    for answer in answers:
+        if answer.platform_id not in platforms:
+            platforms[answer.platform_id] = AIPlatform(
+                platform_id=answer.platform_id,
+                platform_name=answer.platform_name or answer.platform_id,
+                method="browser" if answer.screenshot_path else "api",
+            )
+    return tuple(platforms.values())
 
 
 def _short_error(message: str, max_length: int = 180) -> str:

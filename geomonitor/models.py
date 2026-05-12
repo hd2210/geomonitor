@@ -42,6 +42,7 @@ class TargetKeyword:
 
 @dataclass(frozen=True)
 class PlatformSelectors:
+    new_chat: str | None = None
     input: str = "textarea, [contenteditable='true']"
     submit: str | None = "button[type='submit']"
     answer_container: str = "main"
@@ -58,6 +59,8 @@ class AIPlatform:
     platform_name: str
     url: str | None = None
     method: Literal["browser", "api"] = "browser"
+    enabled: bool = True
+    new_chat_url: str | None = None
     selectors: PlatformSelectors = field(default_factory=PlatformSelectors)
     model: str | None = None
     api_base_url: str | None = None
@@ -95,6 +98,9 @@ class MonitorConfig:
     ai_platforms: tuple[AIPlatform, ...]
     schedule: ScheduleConfig | None
     output_dir: str
+    run_mode: Literal["browser", "api"] = "browser"
+    browser_platforms: tuple[AIPlatform, ...] = field(default_factory=tuple)
+    api_platforms: tuple[AIPlatform, ...] = field(default_factory=tuple)
     runner: RunnerConfig = field(default_factory=RunnerConfig)
 
 

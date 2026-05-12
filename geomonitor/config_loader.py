@@ -13,6 +13,7 @@ from .models import (
     ScheduleConfig,
     TargetKeyword,
 )
+from .platform_templates import browser_platform_defaults, merge_browser_template
 
 
 class ConfigError(ValueError):
@@ -43,7 +44,12 @@ def load_config(path: str | Path) -> MonitorConfig:
 def parse_config(data: dict[str, Any]) -> MonitorConfig:
     questions = tuple(_parse_questions(data.get("questions")))
     keywords = tuple(_parse_keywords(data.get("target_keywords")))
-    platforms = tuple(_parse_platforms(data.get("ai_platforms")))
+    run_mode = data.get("run_mode") or _infer_legacy_run_mode(data)
+    if run_mode not in {"browser", "api"}:
+        raise ConfigError("run_mode must be either browser or api.")
+    browser_platforms = tuple(_parse_platforms(_browser_platform_source(data), forced_method="browser"))
+    api_platforms = tuple(_parse_platforms(_api_platform_source(data), forced_method="api"))
+    platforms = tuple(p for p in (browser_platforms if run_mode == "browser" else api_platforms) if p.enabled)
     schedule = _parse_schedule(data.get("schedule"))
     output_dir = _required_str(data, "output_dir")
     runner = _parse_runner(data.get("runner", {}))
@@ -53,16 +59,41 @@ def parse_config(data: dict[str, Any]) -> MonitorConfig:
     if not keywords:
         raise ConfigError("target_keywords must contain at least one item.")
     if not platforms:
-        raise ConfigError("ai_platforms must contain at least one item.")
+        raise ConfigError(f"{run_mode} mode must contain at least one enabled platform.")
 
     return MonitorConfig(
         questions=questions,
         target_keywords=keywords,
         ai_platforms=platforms,
+        run_mode=run_mode,
+        browser_platforms=browser_platforms,
+        api_platforms=api_platforms,
         schedule=schedule,
         output_dir=output_dir,
         runner=runner,
     )
+
+
+def _browser_platform_source(data: dict[str, Any]) -> list[Any]:
+    if "browser_platforms" in data:
+        return data.get("browser_platforms")
+    legacy = [item for item in data.get("ai_platforms", []) if isinstance(item, dict) and item.get("method", "browser") == "browser"]
+    return legacy or browser_platform_defaults()
+
+
+def _api_platform_source(data: dict[str, Any]) -> list[Any]:
+    if "api_platforms" in data:
+        return data.get("api_platforms")
+    return [item for item in data.get("ai_platforms", []) if isinstance(item, dict) and item.get("method") == "api"]
+
+
+def _infer_legacy_run_mode(data: dict[str, Any]) -> str:
+    if "browser_platforms" in data or "api_platforms" in data:
+        return "browser"
+    legacy = data.get("ai_platforms")
+    if isinstance(legacy, list) and legacy and all(isinstance(item, dict) and item.get("method") == "api" for item in legacy):
+        return "api"
+    return "browser"
 
 
 def _parse_questions(value: Any) -> list[Question]:
@@ -109,22 +140,25 @@ def _parse_keywords(value: Any) -> list[TargetKeyword]:
     return keywords
 
 
-def _parse_platforms(value: Any) -> list[AIPlatform]:
+def _parse_platforms(value: Any, forced_method: str | None = None) -> list[AIPlatform]:
     if not isinstance(value, list):
-        raise ConfigError("ai_platforms must be a list.")
+        raise ConfigError("platforms must be a list.")
     platforms: list[AIPlatform] = []
     seen: set[str] = set()
     for item in value:
         if not isinstance(item, dict):
             raise ConfigError("Each AI platform must be an object.")
+        if forced_method == "browser":
+            item = merge_browser_template(item)
         platform_id = _required_str(item, "platform_id")
         if platform_id in seen:
             raise ConfigError(f"Duplicate platform_id: {platform_id}")
         seen.add(platform_id)
-        method = item.get("method", "browser")
+        method = forced_method or item.get("method", "browser")
         if method not in {"browser", "api"}:
             raise ConfigError(f"Unsupported platform method for {platform_id}: {method}")
         selectors = _parse_selectors(item.get("selectors", {}))
+        enabled = bool(item.get("enabled", True))
         url = item.get("url")
         if method == "browser":
             if not isinstance(url, str) or not url.strip():
@@ -140,6 +174,8 @@ def _parse_platforms(value: Any) -> list[AIPlatform]:
                 platform_name=_required_str(item, "platform_name"),
                 url=url.strip() if isinstance(url, str) and url.strip() else None,
                 method=method,
+                enabled=enabled,
+                new_chat_url=_optional_str(item, "new_chat_url"),
                 selectors=selectors,
                 model=model,
                 api_base_url=_optional_str(item, "api_base_url"),

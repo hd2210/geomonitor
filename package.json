@@ -1,0 +1,26 @@
+{
+  "name": "geomonitor",
+  "version": "1.0.0",
+  "description": "一个用于监测目标关键词在 AI 回答中可见度、出现率和排名的 Agent。当前默认采集方式为 AstraFlow / ModelVerse 文本生成 API，并开启 `web_search` 能力。",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hd2210/geomonitor.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/hd2210/geomonitor/issues"
+  },
+  "homepage": "https://github.com/hd2210/geomonitor#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^25.7.0"
+  }
+}

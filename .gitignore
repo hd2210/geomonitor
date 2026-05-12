@@ -4,3 +4,11 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 data/browser-profiles/
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

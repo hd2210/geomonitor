@@ -6,6 +6,7 @@ const state = {
   activeTab: "overview",
   activeView: "results",
   runStatusTimer: null,
+  loginStatusTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -27,6 +28,12 @@ function bindEvents() {
   $("addModelButton").addEventListener("click", addModel);
   $("saveConfigButton").addEventListener("click", saveConfig);
   $("startRunButton").addEventListener("click", startRun);
+  document.querySelectorAll("input[name='runMode']").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      state.config.run_mode = event.target.value;
+      renderConfig();
+    });
+  });
   document.querySelectorAll(".primary-nav-item").forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
@@ -191,11 +198,52 @@ function renderConfig() {
   $("configPath").textContent = state.config.config_path;
   $("configQuestionCount").textContent = `${state.config.questions.length} 个问题`;
   $("configKeywordCount").textContent = `${state.config.target_keywords.length} 个关键词`;
-  $("configModelCount").textContent = `${state.config.ai_platforms.length} 个模型`;
+  $("configModelCount").textContent = `${state.config.api_platforms.length} 个模型`;
+  $("configWebsiteCount").textContent = `${state.config.browser_platforms.filter((item) => item.enabled !== false).length}/${state.config.browser_platforms.length} 个网站启用`;
+  document.querySelectorAll("input[name='runMode']").forEach((input) => {
+    input.checked = input.value === (state.config.run_mode || "browser");
+  });
+  $("browserConfigPanel").classList.toggle("hidden", (state.config.run_mode || "browser") !== "browser");
+  $("apiConfigPanel").classList.toggle("hidden", state.config.run_mode !== "api");
   $("configQuestionsText").value = state.config.questions.map((item) => item.question).join("\n");
-  $("configModels").innerHTML = state.config.ai_platforms.map(renderModelEditor).join("");
+  $("configWebsites").innerHTML = state.config.browser_platforms.map(renderWebsiteEditor).join("");
+  $("configModels").innerHTML = state.config.api_platforms.map(renderModelEditor).join("");
   $("configKeywords").innerHTML = state.config.target_keywords.map(renderKeywordEditor).join("");
   bindConfigEditors();
+}
+
+function renderWebsiteEditor(platform, index) {
+  const selectors = platform.selectors || {};
+  return `
+    <div class="config-card model-card" data-website-index="${index}">
+      <div class="field-grid">
+        <label class="checkbox-field">
+          <input class="config-website-enabled" type="checkbox" ${platform.enabled !== false ? "checked" : ""} />
+          <span>启用</span>
+        </label>
+        <button class="secondary-button prepare-login" type="button">准备登录</button>
+      </div>
+      <label>
+        <span>网站 ID</span>
+        <input class="config-website-id" value="${escapeHtml(platform.platform_id)}" />
+      </label>
+      <label>
+        <span>网站名称</span>
+        <input class="config-website-name" value="${escapeHtml(platform.platform_name)}" />
+      </label>
+      <label>
+        <span>访问地址</span>
+        <input class="config-website-url" value="${escapeHtml(platform.url || "")}" />
+      </label>
+      <details>
+        <summary>高级 selectors（默认由程序识别，必要时再改）</summary>
+        <label><span>新对话 URL</span><input class="config-website-new-chat-url" value="${escapeHtml(platform.new_chat_url || "")}" /></label>
+        ${["new_chat", "input", "submit", "answer_container", "answer_item", "stop_generating", "done_indicator", "login_indicator", "blocked_indicator"]
+          .map((key) => `<label><span>${key}</span><input class="config-selector" data-selector-key="${key}" value="${escapeHtml(selectors[key] || "")}" /></label>`)
+          .join("")}
+      </details>
+    </div>
+  `;
 }
 
 function renderModelEditor(platform, index) {
@@ -261,30 +309,57 @@ function bindConfigEditors() {
   document.querySelectorAll(".remove-model").forEach((button) => {
     button.addEventListener("click", () => {
       const index = Number(button.closest("[data-model-index]").dataset.modelIndex);
-      state.config.ai_platforms.splice(index, 1);
+      state.config.api_platforms.splice(index, 1);
       renderConfig();
     });
   });
   document.querySelectorAll("[data-model-index]").forEach((card) => {
     const index = Number(card.dataset.modelIndex);
     card.querySelector(".config-model-id").addEventListener("input", (event) => {
-      state.config.ai_platforms[index].platform_id = event.target.value;
+      state.config.api_platforms[index].platform_id = event.target.value;
     });
     card.querySelector(".config-model-name").addEventListener("input", (event) => {
-      state.config.ai_platforms[index].platform_name = event.target.value;
+      state.config.api_platforms[index].platform_name = event.target.value;
     });
     card.querySelector(".config-model-value").addEventListener("input", (event) => {
-      state.config.ai_platforms[index].model = event.target.value;
+      state.config.api_platforms[index].model = event.target.value;
     });
     card.querySelector(".config-model-api-url").addEventListener("input", (event) => {
-      state.config.ai_platforms[index].api_base_url = event.target.value;
+      state.config.api_platforms[index].api_base_url = event.target.value;
     });
     card.querySelector(".config-model-web-search").addEventListener("change", (event) => {
-      state.config.ai_platforms[index].web_search = event.target.checked;
+      state.config.api_platforms[index].web_search = event.target.checked;
     });
     card.querySelector(".config-model-web-vendor").addEventListener("input", (event) => {
-      state.config.ai_platforms[index].web_search_vendor = event.target.value;
+      state.config.api_platforms[index].web_search_vendor = event.target.value;
     });
+  });
+  document.querySelectorAll("[data-website-index]").forEach((card) => {
+    const index = Number(card.dataset.websiteIndex);
+    const platform = state.config.browser_platforms[index];
+    card.querySelector(".config-website-enabled").addEventListener("change", (event) => {
+      platform.enabled = event.target.checked;
+      $("configWebsiteCount").textContent = `${state.config.browser_platforms.filter((item) => item.enabled !== false).length}/${state.config.browser_platforms.length} 个网站启用`;
+    });
+    card.querySelector(".config-website-id").addEventListener("input", (event) => {
+      platform.platform_id = event.target.value;
+    });
+    card.querySelector(".config-website-name").addEventListener("input", (event) => {
+      platform.platform_name = event.target.value;
+    });
+    card.querySelector(".config-website-url").addEventListener("input", (event) => {
+      platform.url = event.target.value;
+    });
+    card.querySelector(".config-website-new-chat-url").addEventListener("input", (event) => {
+      platform.new_chat_url = event.target.value;
+    });
+    card.querySelectorAll(".config-selector").forEach((input) => {
+      input.addEventListener("input", (event) => {
+        platform.selectors = platform.selectors || {};
+        platform.selectors[event.target.dataset.selectorKey] = event.target.value;
+      });
+    });
+    card.querySelector(".prepare-login").addEventListener("click", () => prepareLogin(platform.platform_id));
   });
   document.querySelectorAll("[data-keyword-index]").forEach((card) => {
     const index = Number(card.dataset.keywordIndex);
@@ -303,8 +378,8 @@ function addKeyword() {
 }
 
 function addModel() {
-  const nextNumber = state.config.ai_platforms.length + 1;
-  state.config.ai_platforms.push({
+  const nextNumber = state.config.api_platforms.length + 1;
+  state.config.api_platforms.push({
     platform_id: `model_${nextNumber}`,
     platform_name: `Model ${nextNumber}`,
     method: "api",
@@ -312,6 +387,7 @@ function addModel() {
     api_base_url: "https://api.modelverse.cn/v1/chat/completions",
     web_search: true,
     web_search_vendor: "",
+    enabled: true,
   });
   renderConfig();
 }
@@ -343,6 +419,7 @@ async function saveConfig() {
 
 function collectConfigPayload() {
   return {
+    run_mode: state.config.run_mode || "browser",
     questions: state.config.questions.map((item) => ({
       question_id: item.question_id.trim(),
       question: item.question.trim(),
@@ -351,16 +428,55 @@ function collectConfigPayload() {
       keyword: item.keyword.trim(),
       aliases: item.aliases || [],
     })),
-    ai_platforms: state.config.ai_platforms.map((item) => ({
+    browser_platforms: state.config.browser_platforms.map((item) => ({
+      platform_id: item.platform_id.trim(),
+      platform_name: item.platform_name.trim(),
+      method: "browser",
+      enabled: item.enabled !== false,
+      url: (item.url || "").trim(),
+      new_chat_url: (item.new_chat_url || "").trim(),
+      selectors: compactObject(item.selectors || {}),
+    })),
+    api_platforms: state.config.api_platforms.map((item) => ({
       platform_id: item.platform_id.trim(),
       platform_name: item.platform_name.trim(),
       method: "api",
+      enabled: item.enabled !== false,
       model: (item.model || "").trim(),
       api_base_url: (item.api_base_url || "").trim(),
       web_search: item.web_search !== false,
       web_search_vendor: (item.web_search_vendor || "").trim(),
     })),
   };
+}
+
+async function prepareLogin(platformId) {
+  $("loginLog").textContent = `正在打开 ${platformId} 登录浏览器...`;
+  try {
+    await fetchJson("/api/login-prepare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform_id: platformId }),
+    });
+    startLoginPolling();
+  } catch (error) {
+    $("loginLog").textContent = `登录准备启动失败：${error.message}`;
+  }
+}
+
+function startLoginPolling() {
+  if (state.loginStatusTimer) clearInterval(state.loginStatusTimer);
+  refreshLoginStatus();
+  state.loginStatusTimer = setInterval(refreshLoginStatus, 1500);
+}
+
+async function refreshLoginStatus() {
+  const status = await fetchJson("/api/login-status");
+  $("loginLog").textContent = status.lines.length ? status.lines.join("\n") : "登录准备日志会显示在这里。";
+  if (!status.running && state.loginStatusTimer) {
+    clearInterval(state.loginStatusTimer);
+    state.loginStatusTimer = null;
+  }
 }
 
 function questionsFromText(text) {
@@ -527,6 +643,15 @@ function uniqueBy(items, keyFn) {
       seen.add(key);
       result.push(item);
     }
+  }
+  return result;
+}
+
+function compactObject(object) {
+  const result = {};
+  for (const [key, value] of Object.entries(object || {})) {
+    const text = String(value || "").trim();
+    if (text) result[key] = text;
   }
   return result;
 }
