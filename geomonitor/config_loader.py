@@ -210,6 +210,10 @@ def _parse_runner(value: Any) -> RunnerConfig:
         raise ConfigError("runner.pause_on_blocked_seconds cannot be negative.")
     if runner.profile_lock_wait_seconds < 0:
         raise ConfigError("runner.profile_lock_wait_seconds cannot be negative.")
+    if runner.browser_concurrency <= 0:
+        raise ConfigError("runner.browser_concurrency must be positive.")
+    if runner.api_concurrency <= 0:
+        raise ConfigError("runner.api_concurrency must be positive.")
     return runner
 
 

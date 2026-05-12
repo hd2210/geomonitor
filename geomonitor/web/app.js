@@ -1,672 +1,545 @@
 const state = {
-  runs: [],
-  currentRunId: null,
-  payload: null,
+  user: null,
+  admin: false,
   config: null,
-  activeTab: "overview",
-  activeView: "results",
-  runStatusTimer: null,
-  loginStatusTimer: null,
+  platforms: [],
+  generated: [],
+  currentMonitorId: null,
+  pollTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
+const isAdminPage = location.pathname === "/admin";
 
 async function init() {
-  bindEvents();
-  await loadRuns();
-  await refreshRunStatus();
+  bindStaticEvents();
+  if (isAdminPage) {
+    await initAdmin();
+  } else {
+    await initUser();
+  }
 }
 
-function bindEvents() {
-  $("refreshButton").addEventListener("click", loadRuns);
-  $("questionSearch").addEventListener("input", renderQuestions);
-  $("platformFilter").addEventListener("change", renderAnswers);
-  $("statusFilter").addEventListener("change", renderAnswers);
-  $("closeDialog").addEventListener("click", () => $("answerDialog").close());
-  $("configQuestionsText").addEventListener("input", syncQuestionsFromText);
-  $("addKeywordButton").addEventListener("click", addKeyword);
-  $("addModelButton").addEventListener("click", addModel);
-  $("saveConfigButton").addEventListener("click", saveConfig);
-  $("startRunButton").addEventListener("click", startRun);
-  document.querySelectorAll("input[name='runMode']").forEach((input) => {
-    input.addEventListener("change", (event) => {
-      state.config.run_mode = event.target.value;
-      renderConfig();
+function bindStaticEvents() {
+  $("sendCodeButton").addEventListener("click", sendCode);
+  $("loginButton").addEventListener("click", login);
+  $("logoutButton").addEventListener("click", logout);
+  $("adminLoginButton").addEventListener("click", adminLogin);
+  $("adminLogoutButton").addEventListener("click", adminLogout);
+  $("generateQuestionsButton").addEventListener("click", generateQuestions);
+  $("startMonitorButton").addEventListener("click", startMonitor);
+  $("refreshMonitorsButton").addEventListener("click", loadMonitors);
+  $("saveAdminConfigButton").addEventListener("click", saveAdminConfig);
+  $("addAdminModelButton").addEventListener("click", addAdminModel);
+  document.querySelectorAll("[data-user-view]").forEach((button) => {
+    button.addEventListener("click", () => setUserView(button.dataset.userView));
+  });
+  document.querySelectorAll("input[name='adminRunMode']").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.config.run_mode = input.value;
+      renderAdminConfig();
     });
   });
-  document.querySelectorAll(".primary-nav-item").forEach((button) => {
-    button.addEventListener("click", () => setView(button.dataset.view));
-  });
-  document.querySelectorAll(".tab").forEach((button) => {
-    button.addEventListener("click", () => setTab(button.dataset.tab));
-  });
 }
 
-async function loadRuns() {
-  await loadConfig();
-  state.runs = await fetchJson("/api/runs");
-  renderRuns();
-  if (state.runs.length === 0) {
-    $("emptyState").classList.remove("hidden");
-    $("dashboard").classList.add("hidden");
-    if (state.activeView === "results") setPageTitle("结果查看", "暂无运行结果");
+async function initUser() {
+  $("adminRoot").classList.add("hidden");
+  const me = await fetchJson("/api/auth/me");
+  state.user = me.user;
+  if (!state.user) {
+    $("loginRoot").classList.remove("hidden");
+    $("userRoot").classList.add("hidden");
     return;
   }
-  const selected = state.currentRunId || state.runs[0].run_id;
-  await loadRun(selected);
+  $("loginRoot").classList.add("hidden");
+  $("userRoot").classList.remove("hidden");
+  $("userName").textContent = `${state.user.company_name} · ${state.user.phone}`;
+  await loadPlatforms();
+  await loadMonitors();
 }
 
-async function loadConfig() {
-  state.config = await fetchJson("/api/config");
-  renderConfig();
+async function initAdmin() {
+  $("loginRoot").classList.add("hidden");
+  $("userRoot").classList.add("hidden");
+  $("adminRoot").classList.remove("hidden");
+  const me = await fetchJson("/api/admin/me");
+  state.admin = me.authenticated;
+  $("adminLoginPanel").classList.toggle("hidden", state.admin);
+  $("adminPanel").classList.toggle("hidden", !state.admin);
+  if (state.admin) await loadAdminConfig();
 }
 
-async function loadRun(runId) {
-  state.currentRunId = runId;
-  state.payload = await fetchJson(`/api/run?id=${encodeURIComponent(runId)}`);
-  $("emptyState").classList.add("hidden");
-  $("dashboard").classList.remove("hidden");
-  if (state.activeView === "results") setPageTitle("结果查看", runId);
-  renderRuns();
-  renderMetrics();
-  renderOverview();
-  renderQuestions();
-  renderKeywords();
-  renderAnswerFilters();
-  renderAnswers();
-}
-
-function setView(view) {
-  state.activeView = view;
-  document.querySelectorAll(".primary-nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.add("hidden"));
-  $(`view-${view}`).classList.remove("hidden");
-  $("runSidebar").classList.toggle("hidden", view !== "results");
-
-  if (view === "results") {
-    setPageTitle("结果查看", state.currentRunId || "选择一次运行结果");
-  } else if (view === "config") {
-    setPageTitle("配置管理", "问题与关键词");
-  } else if (view === "run") {
-    setPageTitle("运行任务", "立即执行监测");
-    refreshRunStatus();
-  }
-}
-
-function setPageTitle(eyebrow, title) {
-  $("topEyebrow").textContent = eyebrow;
-  $("pageTitle").textContent = title;
-}
-
-function renderRuns() {
-  $("runList").innerHTML = state.runs
-    .map((run) => {
-      const active = run.run_id === state.currentRunId ? " active" : "";
-      return `
-        <button class="run-item${active}" data-run-id="${escapeHtml(run.run_id)}">
-          <strong>${escapeHtml(run.run_id)}</strong>
-          <span>${run.success_count}/${run.answer_count} success · ${run.question_count} questions</span>
-          <span>${escapeHtml(run.platforms.join(", ") || "No platforms")}</span>
-        </button>
-      `;
-    })
-    .join("");
-  document.querySelectorAll(".run-item").forEach((button) => {
-    button.addEventListener("click", () => loadRun(button.dataset.runId));
-  });
-}
-
-function renderMetrics() {
-  const answers = state.payload.answers;
-  const success = answers.filter((item) => ["success", "partial_success"].includes(item.status)).length;
-  const platforms = new Set(answers.map((item) => item.platform_id));
-  const keywords = new Set(state.payload.global_summary.map((item) => item.keyword));
-  $("metricAnswers").textContent = answers.length;
-  $("metricSuccess").textContent = success;
-  $("metricPlatforms").textContent = platforms.size;
-  $("metricKeywords").textContent = keywords.size;
-}
-
-function renderOverview() {
-  $("globalSummary").innerHTML = state.payload.global_summary
-    .map((row) => {
-      const rate = numeric(row.appearance_rate);
-      return `
-        <div class="summary-row">
-          <strong>${escapeHtml(row.keyword)}</strong>
-          <div class="bar"><div class="bar-fill" style="width:${Math.max(0, Math.min(100, rate * 100))}%"></div></div>
-          <span>${formatPercent(rate)}</span>
-        </div>
-      `;
-    })
-    .join("");
-
-  $("platformSummary").innerHTML = state.payload.platform_summary
-    .map(
-      (row) => `
-        <tr>
-          <td>${escapeHtml(row.platform_id)}</td>
-          <td>${escapeHtml(row.keyword)}</td>
-          <td>${escapeHtml(row.appeared_count)}/${escapeHtml(row.total_questions)}</td>
-          <td>${formatPercent(numeric(row.appearance_rate))}</td>
-          <td>${escapeHtml(row.avg_rank || "-")}</td>
-          <td>${escapeHtml(row.best_rank || "-")}</td>
-        </tr>
-      `,
-    )
-    .join("");
-}
-
-function renderQuestions() {
-  const query = $("questionSearch").value.trim().toLowerCase();
-  const questions = uniqueBy(state.payload.answers, (item) => item.question_id)
-    .filter((item) => !query || `${item.question_id} ${item.question}`.toLowerCase().includes(query))
-    .sort((a, b) => a.question_id.localeCompare(b.question_id));
-
-  $("questionList").innerHTML = questions
-    .map((question) => {
-      const rows = state.payload.answers.filter((item) => item.question_id === question.question_id);
-      const success = rows.filter((item) => ["success", "partial_success"].includes(item.status)).length;
-      return `
-        <div class="question-card">
-          <strong>${escapeHtml(question.question_id)} · ${success}/${rows.length} success</strong>
-          <p>${escapeHtml(question.question)}</p>
-        </div>
-      `;
-    })
-    .join("");
-}
-
-function renderKeywords() {
-  $("keywordGrid").innerHTML = state.payload.global_summary
-    .map((row) => {
-      const rate = numeric(row.appearance_rate);
-      return `
-        <div class="keyword-card">
-          <strong>${escapeHtml(row.keyword)}</strong>
-          <span class="rate">${formatPercent(rate)}</span>
-          <div class="bar"><div class="bar-fill" style="width:${rate * 100}%"></div></div>
-          <span class="eyebrow">${escapeHtml(row.appeared_count)} / ${escapeHtml(row.total_answers)} appeared · avg rank ${escapeHtml(row.avg_rank || "-")}</span>
-        </div>
-      `;
-    })
-    .join("");
-}
-
-function renderConfig() {
-  if (!state.config) return;
-  $("configPath").textContent = state.config.config_path;
-  $("configQuestionCount").textContent = `${state.config.questions.length} 个问题`;
-  $("configKeywordCount").textContent = `${state.config.target_keywords.length} 个关键词`;
-  $("configModelCount").textContent = `${state.config.api_platforms.length} 个模型`;
-  $("configWebsiteCount").textContent = `${state.config.browser_platforms.filter((item) => item.enabled !== false).length}/${state.config.browser_platforms.length} 个网站启用`;
-  document.querySelectorAll("input[name='runMode']").forEach((input) => {
-    input.checked = input.value === (state.config.run_mode || "browser");
-  });
-  $("browserConfigPanel").classList.toggle("hidden", (state.config.run_mode || "browser") !== "browser");
-  $("apiConfigPanel").classList.toggle("hidden", state.config.run_mode !== "api");
-  $("configQuestionsText").value = state.config.questions.map((item) => item.question).join("\n");
-  $("configWebsites").innerHTML = state.config.browser_platforms.map(renderWebsiteEditor).join("");
-  $("configModels").innerHTML = state.config.api_platforms.map(renderModelEditor).join("");
-  $("configKeywords").innerHTML = state.config.target_keywords.map(renderKeywordEditor).join("");
-  bindConfigEditors();
-}
-
-function renderWebsiteEditor(platform, index) {
-  const selectors = platform.selectors || {};
-  return `
-    <div class="config-card model-card" data-website-index="${index}">
-      <div class="field-grid">
-        <label class="checkbox-field">
-          <input class="config-website-enabled" type="checkbox" ${platform.enabled !== false ? "checked" : ""} />
-          <span>启用</span>
-        </label>
-        <button class="secondary-button prepare-login" type="button">准备登录</button>
-      </div>
-      <label>
-        <span>网站 ID</span>
-        <input class="config-website-id" value="${escapeHtml(platform.platform_id)}" />
-      </label>
-      <label>
-        <span>网站名称</span>
-        <input class="config-website-name" value="${escapeHtml(platform.platform_name)}" />
-      </label>
-      <label>
-        <span>访问地址</span>
-        <input class="config-website-url" value="${escapeHtml(platform.url || "")}" />
-      </label>
-      <details>
-        <summary>高级 selectors（默认由程序识别，必要时再改）</summary>
-        <label><span>新对话 URL</span><input class="config-website-new-chat-url" value="${escapeHtml(platform.new_chat_url || "")}" /></label>
-        ${["new_chat", "input", "submit", "answer_container", "answer_item", "stop_generating", "done_indicator", "login_indicator", "blocked_indicator"]
-          .map((key) => `<label><span>${key}</span><input class="config-selector" data-selector-key="${key}" value="${escapeHtml(selectors[key] || "")}" /></label>`)
-          .join("")}
-      </details>
-    </div>
-  `;
-}
-
-function renderModelEditor(platform, index) {
-  return `
-    <div class="config-card model-card" data-model-index="${index}">
-      <div class="field-grid">
-        <label>
-          <span>平台 ID</span>
-          <input class="config-model-id" value="${escapeHtml(platform.platform_id)}" />
-        </label>
-        <button class="danger-button remove-model" title="删除模型">删除</button>
-      </div>
-      <label>
-        <span>显示名称</span>
-        <input class="config-model-name" value="${escapeHtml(platform.platform_name)}" />
-      </label>
-      <label>
-        <span>Model ID，可选择预设或输入自定义模型</span>
-        <input class="config-model-value" list="modelPresets" value="${escapeHtml(platform.model || "")}" />
-      </label>
-      <label>
-        <span>API Base URL</span>
-        <input class="config-model-api-url" value="${escapeHtml(platform.api_base_url || "")}" placeholder="https://api.modelverse.cn/v1/chat/completions" />
-      </label>
-      <label class="checkbox-field">
-        <input class="config-model-web-search" type="checkbox" ${platform.web_search !== false ? "checked" : ""} />
-        <span>开启 web_search</span>
-      </label>
-      <label>
-        <span>Web Search Vendor，可留空使用默认</span>
-        <input class="config-model-web-vendor" value="${escapeHtml(platform.web_search_vendor || "")}" placeholder="默认 vendor" />
-      </label>
-    </div>
-  `;
-}
-
-function renderKeywordEditor(keyword, index) {
-  return `
-    <div class="config-card" data-keyword-index="${index}">
-      <div class="field-grid">
-        <label>
-          <span>Keyword</span>
-          <input class="config-keyword-name" value="${escapeHtml(keyword.keyword)}" />
-        </label>
-        <button class="danger-button remove-keyword" title="删除关键词">删除</button>
-      </div>
-      <label>
-        <span>Aliases，用英文逗号分隔</span>
-        <textarea class="config-keyword-aliases" rows="3">${escapeHtml((keyword.aliases || []).join(", "))}</textarea>
-      </label>
-    </div>
-  `;
-}
-
-function bindConfigEditors() {
-  document.querySelectorAll(".remove-keyword").forEach((button) => {
-    button.addEventListener("click", () => {
-      const index = Number(button.closest("[data-keyword-index]").dataset.keywordIndex);
-      state.config.target_keywords.splice(index, 1);
-      renderConfig();
-    });
-  });
-  document.querySelectorAll(".remove-model").forEach((button) => {
-    button.addEventListener("click", () => {
-      const index = Number(button.closest("[data-model-index]").dataset.modelIndex);
-      state.config.api_platforms.splice(index, 1);
-      renderConfig();
-    });
-  });
-  document.querySelectorAll("[data-model-index]").forEach((card) => {
-    const index = Number(card.dataset.modelIndex);
-    card.querySelector(".config-model-id").addEventListener("input", (event) => {
-      state.config.api_platforms[index].platform_id = event.target.value;
-    });
-    card.querySelector(".config-model-name").addEventListener("input", (event) => {
-      state.config.api_platforms[index].platform_name = event.target.value;
-    });
-    card.querySelector(".config-model-value").addEventListener("input", (event) => {
-      state.config.api_platforms[index].model = event.target.value;
-    });
-    card.querySelector(".config-model-api-url").addEventListener("input", (event) => {
-      state.config.api_platforms[index].api_base_url = event.target.value;
-    });
-    card.querySelector(".config-model-web-search").addEventListener("change", (event) => {
-      state.config.api_platforms[index].web_search = event.target.checked;
-    });
-    card.querySelector(".config-model-web-vendor").addEventListener("input", (event) => {
-      state.config.api_platforms[index].web_search_vendor = event.target.value;
-    });
-  });
-  document.querySelectorAll("[data-website-index]").forEach((card) => {
-    const index = Number(card.dataset.websiteIndex);
-    const platform = state.config.browser_platforms[index];
-    card.querySelector(".config-website-enabled").addEventListener("change", (event) => {
-      platform.enabled = event.target.checked;
-      $("configWebsiteCount").textContent = `${state.config.browser_platforms.filter((item) => item.enabled !== false).length}/${state.config.browser_platforms.length} 个网站启用`;
-    });
-    card.querySelector(".config-website-id").addEventListener("input", (event) => {
-      platform.platform_id = event.target.value;
-    });
-    card.querySelector(".config-website-name").addEventListener("input", (event) => {
-      platform.platform_name = event.target.value;
-    });
-    card.querySelector(".config-website-url").addEventListener("input", (event) => {
-      platform.url = event.target.value;
-    });
-    card.querySelector(".config-website-new-chat-url").addEventListener("input", (event) => {
-      platform.new_chat_url = event.target.value;
-    });
-    card.querySelectorAll(".config-selector").forEach((input) => {
-      input.addEventListener("input", (event) => {
-        platform.selectors = platform.selectors || {};
-        platform.selectors[event.target.dataset.selectorKey] = event.target.value;
-      });
-    });
-    card.querySelector(".prepare-login").addEventListener("click", () => prepareLogin(platform.platform_id));
-  });
-  document.querySelectorAll("[data-keyword-index]").forEach((card) => {
-    const index = Number(card.dataset.keywordIndex);
-    card.querySelector(".config-keyword-name").addEventListener("input", (event) => {
-      state.config.target_keywords[index].keyword = event.target.value;
-    });
-    card.querySelector(".config-keyword-aliases").addEventListener("input", (event) => {
-      state.config.target_keywords[index].aliases = splitAliases(event.target.value);
-    });
-  });
-}
-
-function addKeyword() {
-  state.config.target_keywords.push({ keyword: "", aliases: [] });
-  renderConfig();
-}
-
-function addModel() {
-  const nextNumber = state.config.api_platforms.length + 1;
-  state.config.api_platforms.push({
-    platform_id: `model_${nextNumber}`,
-    platform_name: `Model ${nextNumber}`,
-    method: "api",
-    model: "",
-    api_base_url: "https://api.modelverse.cn/v1/chat/completions",
-    web_search: true,
-    web_search_vendor: "",
-    enabled: true,
-  });
-  renderConfig();
-}
-
-function syncQuestionsFromText() {
-  const questions = questionsFromText($("configQuestionsText").value);
-  state.config.questions = questions;
-  $("configQuestionCount").textContent = `${questions.length} 个问题`;
-}
-
-async function saveConfig() {
-  const payload = collectConfigPayload();
-  $("configStatus").textContent = "正在保存...";
-  $("saveConfigButton").disabled = true;
+async function sendCode() {
+  const phone = $("loginPhone").value.trim();
+  const companyName = $("loginCompany").value.trim();
+  $("loginMessage").textContent = "正在发送验证码...";
   try {
-    await fetchJson("/api/config", {
+    const payload = await fetchJson("/api/auth/send-code", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({phone, company_name: companyName}),
     });
-    await loadConfig();
-    $("configStatus").textContent = "配置已保存。下一次运行会使用新的问题和关键词。";
+    $("loginMessage").textContent = payload.message || "验证码已发送。";
   } catch (error) {
-    $("configStatus").textContent = `保存失败：${error.message}`;
-  } finally {
-    $("saveConfigButton").disabled = false;
+    $("loginMessage").textContent = error.message;
   }
 }
 
-function collectConfigPayload() {
-  return {
-    run_mode: state.config.run_mode || "browser",
-    questions: state.config.questions.map((item) => ({
-      question_id: item.question_id.trim(),
-      question: item.question.trim(),
-    })),
-    target_keywords: state.config.target_keywords.map((item) => ({
-      keyword: item.keyword.trim(),
-      aliases: item.aliases || [],
-    })),
-    browser_platforms: state.config.browser_platforms.map((item) => ({
-      platform_id: item.platform_id.trim(),
-      platform_name: item.platform_name.trim(),
-      method: "browser",
-      enabled: item.enabled !== false,
-      url: (item.url || "").trim(),
-      new_chat_url: (item.new_chat_url || "").trim(),
-      selectors: compactObject(item.selectors || {}),
-    })),
-    api_platforms: state.config.api_platforms.map((item) => ({
-      platform_id: item.platform_id.trim(),
-      platform_name: item.platform_name.trim(),
-      method: "api",
-      enabled: item.enabled !== false,
-      model: (item.model || "").trim(),
-      api_base_url: (item.api_base_url || "").trim(),
-      web_search: item.web_search !== false,
-      web_search_vendor: (item.web_search_vendor || "").trim(),
-    })),
+async function login() {
+  try {
+    await fetchJson("/api/auth/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        phone: $("loginPhone").value.trim(),
+        company_name: $("loginCompany").value.trim(),
+        code: $("loginCode").value.trim(),
+      }),
+    });
+    await initUser();
+  } catch (error) {
+    $("loginMessage").textContent = error.message;
+  }
+}
+
+async function logout() {
+  await fetchJson("/api/auth/logout", {method: "POST"});
+  location.reload();
+}
+
+async function adminLogin() {
+  $("adminLoginMessage").textContent = "正在验证...";
+  try {
+    await fetchJson("/api/admin/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({password: $("adminPassword").value}),
+    });
+    await initAdmin();
+  } catch (error) {
+    $("adminLoginMessage").textContent = error.message;
+  }
+}
+
+async function adminLogout() {
+  await fetchJson("/api/admin/logout", {method: "POST"});
+  location.reload();
+}
+
+async function loadPlatforms() {
+  const payload = await fetchJson("/api/user/platforms");
+  state.platforms = payload.platforms;
+  $("enabledPlatformNames").textContent = state.platforms.map((item) => item.platform_name).join("、") || "暂无启用平台";
+  renderPlatformChoices();
+}
+
+function renderPlatformChoices() {
+  $("platformChoices").innerHTML = state.platforms.map((platform) => `
+    <label class="checkbox-pill">
+      <input type="checkbox" value="${escapeHtml(platform.platform_id)}" checked />
+      <span>${escapeHtml(platform.platform_name)}</span>
+    </label>
+  `).join("");
+}
+
+async function generateQuestions() {
+  const brandName = $("brandName").value.trim();
+  const intention = $("intention").value.trim();
+  $("createMessage").textContent = "正在用 GPT-5.5 生成问题...";
+  $("generateQuestionsButton").disabled = true;
+  try {
+    const payload = await fetchJson("/api/monitor/generate-questions", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({brand_name: brandName, intention}),
+    });
+    state.generated = payload.questions;
+    renderGeneratedQuestions();
+    $("questionConfirmPanel").classList.remove("hidden");
+    $("createMessage").textContent = `已生成 15 个问题。剩余可创建次数：${payload.remaining_quota}`;
+  } catch (error) {
+    $("createMessage").textContent = error.message;
+  } finally {
+    $("generateQuestionsButton").disabled = false;
+  }
+}
+
+function renderGeneratedQuestions() {
+  $("generatedQuestions").innerHTML = state.generated.map((item, index) => `
+    <label class="question-editor-row">
+      <span>${escapeHtml(item.question_id)}</span>
+      <input data-question-index="${index}" value="${escapeHtml(item.question)}" />
+    </label>
+  `).join("");
+  document.querySelectorAll("[data-question-index]").forEach((input) => {
+    input.addEventListener("input", () => {
+      state.generated[Number(input.dataset.questionIndex)].question = input.value;
+    });
+  });
+}
+
+async function startMonitor() {
+  const selected = [...document.querySelectorAll("#platformChoices input:checked")].map((item) => item.value);
+  $("createMessage").textContent = "正在创建监测任务...";
+  $("startMonitorButton").disabled = true;
+  try {
+    const payload = await fetchJson("/api/monitor/start", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        brand_name: $("brandName").value.trim(),
+        intention: $("intention").value.trim(),
+        questions: state.generated,
+        selected_platforms: selected,
+      }),
+    });
+    state.currentMonitorId = payload.monitor.id;
+    $("createMessage").textContent = "监测已开始。";
+    setUserView("results");
+    await loadMonitors();
+    startMonitorPolling(payload.monitor.id);
+  } catch (error) {
+    $("createMessage").textContent = error.message;
+  } finally {
+    $("startMonitorButton").disabled = false;
+  }
+}
+
+function startMonitorPolling(monitorId) {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(async () => {
+    const payload = await fetchJson(`/api/monitor?id=${encodeURIComponent(monitorId)}`);
+    renderMonitorDetail(payload);
+    if (!isActiveMonitorStatus(payload.monitor.status)) {
+      clearInterval(state.pollTimer);
+      state.pollTimer = null;
+      await loadMonitors();
+    }
+  }, 2000);
+}
+
+async function loadMonitors() {
+  const monitors = await fetchJson("/api/monitors");
+  $("monitorList").innerHTML = monitors.map((monitor) => `
+    <button class="monitor-item" data-monitor-id="${monitor.id}">
+      <strong>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</strong>
+      <span>${escapeHtml(monitor.status)} · ${escapeHtml(monitor.created_at)}${monitor.completed_at ? ` · 完成 ${escapeHtml(monitor.completed_at)}` : ""}</span>
+    </button>
+  `).join("") || `<div class="empty-state compact">暂无监测任务</div>`;
+  document.querySelectorAll("[data-monitor-id]").forEach((button) => {
+    button.addEventListener("click", () => loadMonitorDetail(button.dataset.monitorId));
+  });
+  if (monitors.length && !state.currentMonitorId) {
+    state.currentMonitorId = monitors[0].id;
+    await loadMonitorDetail(state.currentMonitorId);
+  }
+}
+
+async function loadMonitorDetail(id) {
+  state.currentMonitorId = id;
+  const payload = await fetchJson(`/api/monitor?id=${encodeURIComponent(id)}`);
+  renderMonitorDetail(payload);
+  if (isActiveMonitorStatus(payload.monitor.status)) startMonitorPolling(id);
+}
+
+function renderMonitorDetail(payload) {
+  const monitor = payload.monitor;
+  const total = monitor.progress_total || 0;
+  const current = monitor.progress_current || 0;
+  const failedCount = payload.run ? payload.run.answers.filter((answer) => !isSuccessfulAnswer(answer)).length : 0;
+  const canRetry = failedCount > 0 && !isActiveMonitorStatus(monitor.status);
+  $("monitorDetail").innerHTML = `
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h3>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</h3>
+          <p class="panel-note">${escapeHtml(monitor.status)} · ${escapeHtml(monitor.progress_message || "")}</p>
+        </div>
+        ${canRetry ? `<button id="retryFailedButton" class="secondary-button">重试失败请求 (${failedCount})</button>` : ""}
+      </div>
+      <div class="bar large"><div class="bar-fill" style="width:${total ? Math.round(current / total * 100) : 0}%"></div></div>
+      <p class="panel-note">${current}/${total} · ${escapeHtml(monitor.notification_message || "")}</p>
+    </section>
+    ${renderRunResult(payload.run)}
+  `;
+  $("retryFailedButton")?.addEventListener("click", () => retryFailedRequests(monitor.id));
+  if (payload.run) bindRunResultControls(payload.run);
+}
+
+async function retryFailedRequests(monitorId) {
+  const button = $("retryFailedButton");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在启动重试...";
+  }
+  try {
+    await fetchJson("/api/monitor/retry", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({monitor_id: monitorId}),
+    });
+    startMonitorPolling(monitorId);
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = error.message;
+    }
+  }
+}
+
+function renderRunResult(run) {
+  if (!run) return "";
+  const platforms = [...new Set(run.answers.map((item) => item.platform_id))].sort();
+  const questions = uniqueBy(run.answers, (item) => item.question_id).sort((a, b) => a.question_id.localeCompare(b.question_id));
+  return `
+    <section class="panel">
+      <h3>品牌提及率与排名</h3>
+      <div class="keyword-grid">
+        ${run.global_summary.map((row) => `
+          <div class="keyword-card">
+            <strong>${escapeHtml(row.keyword)}</strong>
+            <span class="rate">${formatPercent(Number(row.appearance_rate || 0))}</span>
+            <span class="eyebrow">均排 ${escapeHtml(row.avg_rank || "-")} · 最佳 ${escapeHtml(row.best_rank || "-")}</span>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+    <section class="panel">
+      <nav class="tabs result-tabs">
+        <button class="tab active" data-result-tab="platforms">各平台表现</button>
+        <button class="tab" data-result-tab="questions">问题列表</button>
+        <button class="tab" data-result-tab="answers">回答详情</button>
+      </nav>
+      <section id="resultTab-platforms" class="result-tab-panel">
+        <div class="filters compact-filters">
+          <select id="platformSummaryFilter">
+            <option value="">全部平台</option>
+            ${platforms.map((platform) => `<option value="${escapeHtml(platform)}">${escapeHtml(platform)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>平台</th><th>品牌</th><th>出现</th><th>出现率</th><th>均排</th></tr></thead><tbody id="platformSummaryBody">
+          ${renderPlatformSummaryRows(run.platform_summary)}
+        </tbody></table></div>
+      </section>
+      <section id="resultTab-questions" class="result-tab-panel hidden">
+        <div class="filters compact-filters">
+          <select id="questionPlatformFilter">
+            <option value="">全部平台</option>
+            ${platforms.map((platform) => `<option value="${escapeHtml(platform)}">${escapeHtml(platform)}</option>`).join("")}
+          </select>
+        </div>
+        <div id="resultQuestionList" class="question-list">${renderQuestionCards(run.answers, "")}</div>
+      </section>
+      <section id="resultTab-answers" class="result-tab-panel hidden">
+        <div class="filters compact-filters">
+          <select id="answerPlatformFilter">
+            <option value="">全部平台</option>
+            ${platforms.map((platform) => `<option value="${escapeHtml(platform)}">${escapeHtml(platform)}</option>`).join("")}
+          </select>
+          <select id="answerQuestionFilter">
+            <option value="">全部问题</option>
+            ${questions.map((question) => `<option value="${escapeHtml(question.question_id)}">${escapeHtml(question.question_id)}</option>`).join("")}
+          </select>
+        </div>
+        <div id="resultAnswerList" class="answer-list">${renderAnswerCards(run.answers, run.run_id)}</div>
+      </section>
+    </section>
+  `;
+}
+
+function bindRunResultControls(run) {
+  document.querySelectorAll("[data-result-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-result-tab]").forEach((item) => item.classList.toggle("active", item === button));
+      document.querySelectorAll(".result-tab-panel").forEach((panel) => panel.classList.add("hidden"));
+      $(`resultTab-${button.dataset.resultTab}`).classList.remove("hidden");
+    });
+  });
+  $("platformSummaryFilter")?.addEventListener("change", (event) => {
+    const platform = event.target.value;
+    $("platformSummaryBody").innerHTML = renderPlatformSummaryRows(run.platform_summary.filter((row) => !platform || row.platform_id === platform));
+  });
+  $("questionPlatformFilter")?.addEventListener("change", (event) => {
+    $("resultQuestionList").innerHTML = renderQuestionCards(run.answers, event.target.value);
+  });
+  const renderFilteredAnswers = () => {
+    const platform = $("answerPlatformFilter").value;
+    const question = $("answerQuestionFilter").value;
+    $("resultAnswerList").innerHTML = renderAnswerCards(
+      run.answers.filter((answer) => (!platform || answer.platform_id === platform) && (!question || answer.question_id === question)),
+      run.run_id,
+    );
   };
+  $("answerPlatformFilter")?.addEventListener("change", renderFilteredAnswers);
+  $("answerQuestionFilter")?.addEventListener("change", renderFilteredAnswers);
+}
+
+function renderPlatformSummaryRows(rows) {
+  return rows.map((row) => `<tr><td>${escapeHtml(row.platform_id)}</td><td>${escapeHtml(row.keyword)}</td><td>${escapeHtml(row.appeared_count)}/${escapeHtml(row.total_questions)}</td><td>${formatPercent(Number(row.appearance_rate || 0))}</td><td>${escapeHtml(row.avg_rank || "-")}</td></tr>`).join("");
+}
+
+function renderQuestionCards(answers, platform) {
+  const rows = platform ? answers.filter((item) => item.platform_id === platform) : answers;
+  return uniqueBy(rows, (item) => item.question_id)
+    .sort((a, b) => a.question_id.localeCompare(b.question_id))
+    .map((item) => {
+      const scoped = rows.filter((answer) => answer.question_id === item.question_id);
+      const success = scoped.filter((answer) => isSuccessfulAnswer(answer)).length;
+      return `<div class="question-card"><strong>${escapeHtml(item.question_id)} · ${success}/${scoped.length} success</strong><p>${escapeHtml(item.question)}</p></div>`;
+    })
+    .join("");
+}
+
+function renderAnswerCards(answers, runId) {
+  return answers.map((answer) => {
+    const screenshotUrl = answer.screenshot_path ? `/runs/${encodeURIComponent(runId)}/${answer.screenshot_path}` : "";
+    return `<div class="answer-card"><div><div class="badge-row"><span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span><span class="badge">${escapeHtml(answer.platform_id)}</span><span class="badge">${escapeHtml(answer.question_id)}</span></div><strong>${escapeHtml(answer.question)}</strong><p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "", 220))}</p></div>${screenshotUrl ? `<a class="answer-action" href="${escapeHtml(screenshotUrl)}" target="_blank" rel="noreferrer">查看截图</a>` : ""}</div>`;
+  }).join("");
+}
+
+function setUserView(view) {
+  document.querySelectorAll("[data-user-view]").forEach((button) => button.classList.toggle("active", button.dataset.userView === view));
+  $("createView").classList.toggle("hidden", view !== "create");
+  $("resultsView").classList.toggle("hidden", view !== "results");
+}
+
+async function loadAdminConfig() {
+  state.config = await fetchJson("/api/admin/config");
+  renderAdminConfig();
+}
+
+function renderAdminConfig() {
+  $("adminConfigPanel").classList.toggle("hidden", false);
+  state.config.runner = state.config.runner || {};
+  document.querySelectorAll("input[name='adminRunMode']").forEach((input) => input.checked = input.value === (state.config.run_mode || "browser"));
+  $("adminBrowserConcurrency").value = state.config.runner.browser_concurrency || 2;
+  $("adminApiConcurrency").value = state.config.runner.api_concurrency || 5;
+  $("adminBrowserPanel").classList.toggle("hidden", (state.config.run_mode || "browser") !== "browser");
+  $("adminApiPanel").classList.toggle("hidden", state.config.run_mode !== "api");
+  $("adminWebsites").innerHTML = state.config.browser_platforms.map((platform, index) => `
+    <div class="config-card" data-admin-website="${index}">
+      <label class="checkbox-field"><input class="admin-website-enabled" type="checkbox" ${platform.enabled !== false ? "checked" : ""}/> <span>启用</span></label>
+      <label><span>网站 ID</span><input class="admin-website-id" value="${escapeHtml(platform.platform_id)}"/></label>
+      <label><span>网站名称</span><input class="admin-website-name" value="${escapeHtml(platform.platform_name)}"/></label>
+      <label><span>访问地址</span><input class="admin-website-url" value="${escapeHtml(platform.url || "")}"/></label>
+      <button class="secondary-button admin-prepare-login" type="button">准备登录</button>
+    </div>
+  `).join("");
+  $("adminModels").innerHTML = state.config.api_platforms.map((platform, index) => `
+    <div class="config-card" data-admin-model="${index}">
+      <label><span>平台 ID</span><input class="admin-model-id" value="${escapeHtml(platform.platform_id)}"/></label>
+      <label><span>显示名称</span><input class="admin-model-name" value="${escapeHtml(platform.platform_name)}"/></label>
+      <label><span>模型 ID</span><input class="admin-model-value" value="${escapeHtml(platform.model || "")}"/></label>
+      <label><span>API Base URL</span><input class="admin-model-url" value="${escapeHtml(platform.api_base_url || "")}"/></label>
+      <label class="checkbox-field"><input class="admin-model-enabled" type="checkbox" ${platform.enabled !== false ? "checked" : ""}/> <span>启用</span></label>
+    </div>
+  `).join("");
+  bindAdminEditors();
+}
+
+function bindAdminEditors() {
+  $("adminBrowserConcurrency").addEventListener("input", (e) => state.config.runner.browser_concurrency = Number(e.target.value || 2));
+  $("adminApiConcurrency").addEventListener("input", (e) => state.config.runner.api_concurrency = Number(e.target.value || 5));
+  document.querySelectorAll("[data-admin-website]").forEach((card) => {
+    const platform = state.config.browser_platforms[Number(card.dataset.adminWebsite)];
+    card.querySelector(".admin-website-enabled").addEventListener("change", (e) => platform.enabled = e.target.checked);
+    card.querySelector(".admin-website-id").addEventListener("input", (e) => platform.platform_id = e.target.value);
+    card.querySelector(".admin-website-name").addEventListener("input", (e) => platform.platform_name = e.target.value);
+    card.querySelector(".admin-website-url").addEventListener("input", (e) => platform.url = e.target.value);
+    card.querySelector(".admin-prepare-login").addEventListener("click", () => prepareLogin(platform.platform_id));
+  });
+  document.querySelectorAll("[data-admin-model]").forEach((card) => {
+    const platform = state.config.api_platforms[Number(card.dataset.adminModel)];
+    card.querySelector(".admin-model-enabled").addEventListener("change", (e) => platform.enabled = e.target.checked);
+    card.querySelector(".admin-model-id").addEventListener("input", (e) => platform.platform_id = e.target.value);
+    card.querySelector(".admin-model-name").addEventListener("input", (e) => platform.platform_name = e.target.value);
+    card.querySelector(".admin-model-value").addEventListener("input", (e) => platform.model = e.target.value);
+    card.querySelector(".admin-model-url").addEventListener("input", (e) => platform.api_base_url = e.target.value);
+  });
+}
+
+function addAdminModel() {
+  state.config.api_platforms.push({platform_id: `model_${state.config.api_platforms.length + 1}`, platform_name: "新模型", method: "api", model: "gpt-5.5", enabled: true, web_search: true});
+  renderAdminConfig();
+}
+
+async function saveAdminConfig() {
+  $("adminConfigMessage").textContent = "正在保存...";
+  try {
+    await fetchJson("/api/admin/config", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({
+      run_mode: state.config.run_mode || "browser",
+      questions: state.config.questions && state.config.questions.length ? state.config.questions : [{question_id: "Q001", question: "placeholder"}],
+      target_keywords: state.config.target_keywords && state.config.target_keywords.length ? state.config.target_keywords : [{keyword: "placeholder", aliases: []}],
+      browser_platforms: state.config.browser_platforms,
+      api_platforms: state.config.api_platforms,
+      runner: {
+        browser_concurrency: Number(state.config.runner?.browser_concurrency || 2),
+        api_concurrency: Number(state.config.runner?.api_concurrency || 5),
+      },
+    })});
+    $("adminConfigMessage").textContent = "已保存。";
+    await loadAdminConfig();
+  } catch (error) {
+    $("adminConfigMessage").textContent = error.message;
+  }
 }
 
 async function prepareLogin(platformId) {
-  $("loginLog").textContent = `正在打开 ${platformId} 登录浏览器...`;
-  try {
-    await fetchJson("/api/login-prepare", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform_id: platformId }),
-    });
-    startLoginPolling();
-  } catch (error) {
-    $("loginLog").textContent = `登录准备启动失败：${error.message}`;
-  }
-}
-
-function startLoginPolling() {
-  if (state.loginStatusTimer) clearInterval(state.loginStatusTimer);
-  refreshLoginStatus();
-  state.loginStatusTimer = setInterval(refreshLoginStatus, 1500);
-}
-
-async function refreshLoginStatus() {
-  const status = await fetchJson("/api/login-status");
-  $("loginLog").textContent = status.lines.length ? status.lines.join("\n") : "登录准备日志会显示在这里。";
-  if (!status.running && state.loginStatusTimer) {
-    clearInterval(state.loginStatusTimer);
-    state.loginStatusTimer = null;
-  }
-}
-
-function questionsFromText(text) {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((question, index) => ({
-      question_id: `Q${String(index + 1).padStart(3, "0")}`,
-      question,
-    }));
-}
-
-async function startRun() {
-  $("startRunButton").disabled = true;
-  $("runLog").textContent = "正在启动...";
-  try {
-    await fetchJson("/api/run-now", { method: "POST" });
-    startRunPolling();
-  } catch (error) {
-    $("runLog").textContent = `启动失败：${error.message}`;
-    $("startRunButton").disabled = false;
-  }
-}
-
-function startRunPolling() {
-  if (state.runStatusTimer) clearInterval(state.runStatusTimer);
-  refreshRunStatus();
-  state.runStatusTimer = setInterval(refreshRunStatus, 1500);
-}
-
-async function refreshRunStatus() {
-  const status = await fetchJson("/api/run-status");
-  $("runStatusText").textContent = status.running ? "Running" : "Idle";
-  $("runExitCode").textContent = status.return_code ?? "-";
-  $("runLog").textContent = status.lines.length ? status.lines.join("\n") : "尚未启动运行。";
-  $("startRunButton").disabled = status.running;
-  if (!status.running && state.runStatusTimer) {
-    clearInterval(state.runStatusTimer);
-    state.runStatusTimer = null;
-    await loadRuns();
-  }
-}
-
-function renderAnswerFilters() {
-  const platforms = [...new Set(state.payload.answers.map((item) => item.platform_id))].sort();
-  $("platformFilter").innerHTML = '<option value="">全部平台</option>' + platforms.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join("");
-}
-
-function renderAnswers() {
-  const platform = $("platformFilter").value;
-  const status = $("statusFilter").value;
-  const answers = state.payload.answers.filter((item) => (!platform || item.platform_id === platform) && (!status || item.status === status));
-
-  $("answerList").innerHTML = answers
-    .map((answer, index) => {
-      const analysis = findAnalysis(answer);
-      const appeared = analysis.keyword_analysis.filter((item) => item.appeared).map((item) => `${item.keyword}${item.rank ? ` #${item.rank}` : ""}`);
-      return `
-        <div class="answer-card">
-          <div>
-            <div class="badge-row">
-              <span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span>
-              <span class="badge">${escapeHtml(answer.platform_id)}</span>
-              <span class="badge">${escapeHtml(answer.question_id)}</span>
-            </div>
-            <strong>${escapeHtml(answer.question)}</strong>
-            <p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "No answer text", 180))}</p>
-            <p>${appeared.length ? `Appeared: ${escapeHtml(appeared.join(", "))}` : "No monitored keyword appeared"}</p>
-          </div>
-          <button data-answer-index="${index}">查看详情</button>
-        </div>
-      `;
-    })
-    .join("");
-
-  document.querySelectorAll("[data-answer-index]").forEach((button) => {
-    button.addEventListener("click", () => openAnswer(answers[Number(button.dataset.answerIndex)]));
-  });
-}
-
-function openAnswer(answer) {
-  const analysis = findAnalysis(answer);
-  $("dialogMeta").textContent = `${answer.platform_id} · ${answer.question_id} · ${answer.status}`;
-  $("dialogTitle").textContent = answer.question;
-  $("dialogAnswer").textContent = answer.answer_text || answer.error_message || "No answer text saved.";
-  $("dialogKeywords").innerHTML = analysis.keyword_analysis
-    .map((item) => {
-      const cls = item.appeared ? "success" : "";
-      const label = item.appeared ? `${item.keyword} · rank ${item.rank || "-"}` : `${item.keyword} · missed`;
-      return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
-    })
-    .join("");
-  if (answer.raw_response_path) {
-    const src = `/runs/${encodeURIComponent(state.currentRunId)}/${answer.raw_response_path}`;
-    $("dialogScreenshot").innerHTML = `<a class="screenshot-link" href="${src}" target="_blank" rel="noreferrer">打开 API 原始 JSON</a>`;
-  } else if (answer.screenshot_path) {
-    const src = `/runs/${encodeURIComponent(state.currentRunId)}/${answer.screenshot_path}`;
-    $("dialogScreenshot").innerHTML = `<a class="screenshot-link" href="${src}" target="_blank" rel="noreferrer">打开截图原图</a><img src="${src}" alt="Answer screenshot" />`;
-  } else {
-    $("dialogScreenshot").innerHTML = '<span class="eyebrow">No raw response saved</span>';
-  }
-  $("answerDialog").showModal();
-}
-
-function findAnalysis(answer) {
-  return (
-    state.payload.analyses.find((item) => item.platform_id === answer.platform_id && item.question_id === answer.question_id) || {
-      keyword_analysis: [],
-    }
-  );
-}
-
-function setTab(tab) {
-  state.activeTab = tab;
-  document.querySelectorAll(".tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab));
-  document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
-  $(`tab-${tab}`).classList.remove("hidden");
+  $("adminLoginLog").textContent = `正在打开 ${platformId} 登录窗口...`;
+  await fetchJson("/api/login-prepare", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({platform_id: platformId})});
+  const timer = setInterval(async () => {
+    const status = await fetchJson("/api/login-status");
+    $("adminLoginLog").textContent = status.lines.join("\n");
+    if (!status.running) clearInterval(timer);
+  }, 1500);
 }
 
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || `Request failed: ${response.status}`);
+    try {
+      const payload = JSON.parse(message);
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(message.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || `HTTP ${response.status}`);
+      }
+      throw error;
+    }
   }
   return response.json();
 }
 
-function splitAliases(text) {
-  const seen = new Set();
-  const aliases = [];
-  for (const alias of text.split(",")) {
-    const value = alias.trim();
-    const key = value.toLowerCase();
-    if (value && !seen.has(key)) {
-      seen.add(key);
-      aliases.push(value);
-    }
-  }
-  return aliases;
-}
-
-function numeric(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatPercent(value) {
-  return `${Math.round(value * 1000) / 10}%`;
-}
-
-function truncate(text, length) {
-  if (text.length <= length) return text;
-  return `${text.slice(0, length - 1)}…`;
-}
-
 function uniqueBy(items, keyFn) {
   const seen = new Set();
-  const result = [];
-  for (const item of items) {
+  return items.filter((item) => {
     const key = keyFn(item);
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(item);
-    }
-  }
-  return result;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-function compactObject(object) {
-  const result = {};
-  for (const [key, value] of Object.entries(object || {})) {
-    const text = String(value || "").trim();
-    if (text) result[key] = text;
-  }
-  return result;
+function isActiveMonitorStatus(status) {
+  return ["queued", "running", "retrying"].includes(status);
+}
+
+function isSuccessfulAnswer(answer) {
+  return ["success", "partial_success"].includes(answer.status);
 }
 
 function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"}[char]));
 }
 
-init().catch((error) => {
-  console.error(error);
-  $("emptyState").classList.remove("hidden");
-  $("emptyState").innerHTML = `<h3>加载失败</h3><p>${escapeHtml(error.message)}</p>`;
-});
+function truncate(value, length) {
+  const text = String(value || "");
+  return text.length <= length ? text : `${text.slice(0, length - 1)}…`;
+}
+
+function formatPercent(value) {
+  return `${(Number(value || 0) * 100).toFixed(1)}%`;
+}
+
+init();

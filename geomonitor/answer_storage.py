@@ -50,6 +50,11 @@ class AnswerStorage:
                 payload["keyword_analysis"] = [asdict(match) for match in record.keyword_analysis]
                 handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
+    def rewrite_answers(self, records: Iterable[AnswerRecord]) -> None:
+        with self.raw_answers_path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(_without_none(asdict(record)), ensure_ascii=False) + "\n")
+
     @staticmethod
     def _append_jsonl(path: Path, payload: dict) -> None:
         with path.open("a", encoding="utf-8") as handle:
@@ -58,7 +63,10 @@ class AnswerStorage:
 
 def read_raw_answers(path: str | Path) -> list[AnswerRecord]:
     records: list[AnswerRecord] = []
-    with Path(path).open("r", encoding="utf-8") as handle:
+    source = Path(path)
+    if not source.exists():
+        return records
+    with source.open("r", encoding="utf-8") as handle:
         for line in handle:
             if line.strip():
                 payload = json.loads(line)

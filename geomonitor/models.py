@@ -82,6 +82,8 @@ class RunnerConfig:
     viewport_height: int = 1200
     pause_on_blocked_seconds: int = 0
     profile_lock_wait_seconds: int = 60
+    browser_concurrency: int = 2
+    api_concurrency: int = 5
 
 
 @dataclass(frozen=True)

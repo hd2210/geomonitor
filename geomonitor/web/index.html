@@ -4,283 +4,151 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI Visibility Monitor</title>
-    <link rel="stylesheet" href="/styles.css?v=browser-login-2" />
+    <link rel="stylesheet" href="/styles.css?v=user-monitor-1" />
   </head>
   <body>
-    <div class="app-shell">
+    <section id="loginRoot" class="auth-shell hidden">
+      <div class="auth-card">
+        <div class="brand">
+          <div class="brand-mark">AI</div>
+          <div>
+            <h1>AI Visibility Monitor</h1>
+            <p>登录后创建 AI 提及率监测</p>
+          </div>
+        </div>
+        <label><span>公司名称</span><input id="loginCompany" placeholder="请输入公司名称" /></label>
+        <label><span>手机号</span><input id="loginPhone" placeholder="请输入手机号" /></label>
+        <div class="inline-form">
+          <label><span>短信验证码</span><input id="loginCode" placeholder="本地模式 123456" /></label>
+          <button id="sendCodeButton" class="secondary-button">获取验证码</button>
+        </div>
+        <button id="loginButton" class="primary-button full">登录 / 注册</button>
+        <p id="loginMessage" class="panel-note"></p>
+      </div>
+    </section>
+
+    <section id="userRoot" class="app-shell hidden">
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">AI</div>
           <div>
             <h1>Visibility Monitor</h1>
-            <p>关键词可见度监测</p>
+            <p id="userName">用户</p>
           </div>
         </div>
-
-        <nav class="primary-nav" aria-label="Primary navigation">
-          <button id="navResults" class="primary-nav-item active" data-view="results">结果查看</button>
-          <button id="navConfig" class="primary-nav-item" data-view="config">配置管理</button>
-          <button id="navRun" class="primary-nav-item" data-view="run">运行任务</button>
+        <nav class="primary-nav">
+          <button class="primary-nav-item active" data-user-view="create">创建AI监测</button>
+          <button class="primary-nav-item" data-user-view="results">监控结果</button>
         </nav>
-
-        <div id="runSidebar" class="sidebar-section">
-          <div class="section-label">Runs</div>
-          <div id="runList" class="run-list"></div>
-        </div>
+        <button id="logoutButton" class="secondary-button full">退出登录</button>
       </aside>
-
       <main class="main">
-        <header class="topbar">
-          <div>
-            <div id="topEyebrow" class="eyebrow">结果查看</div>
-            <h2 id="pageTitle">选择一次运行结果</h2>
-          </div>
-          <div class="topbar-actions">
-            <button id="refreshButton" class="icon-button" title="刷新">↻</button>
-          </div>
-        </header>
-
-        <section id="view-results" class="view-panel">
-          <section id="emptyState" class="empty-state">
-            <h3>暂无可展示的运行结果</h3>
-            <p>执行一次监测后，这里会自动展示问题、关键词、统计和回答详情。</p>
-          </section>
-
-          <section id="dashboard" class="dashboard hidden">
-            <div class="metrics-grid">
-              <div class="metric">
-                <span>回答记录</span>
-                <strong id="metricAnswers">0</strong>
-              </div>
-              <div class="metric">
-                <span>成功回答</span>
-                <strong id="metricSuccess">0</strong>
-              </div>
-              <div class="metric">
-                <span>监测平台</span>
-                <strong id="metricPlatforms">0</strong>
-              </div>
-              <div class="metric">
-                <span>关键词数</span>
-                <strong id="metricKeywords">0</strong>
-              </div>
+        <section id="createView" class="view-panel">
+          <header class="topbar">
+            <div>
+              <div class="eyebrow">创建AI监测</div>
+              <h2>输入品牌和消费者意图</h2>
             </div>
-
-            <nav class="tabs" aria-label="Dashboard tabs">
-              <button class="tab active" data-tab="overview">概览</button>
-              <button class="tab" data-tab="questions">问题列表</button>
-              <button class="tab" data-tab="keywords">关键词</button>
-              <button class="tab" data-tab="answers">回答详情</button>
-            </nav>
-
-            <section id="tab-overview" class="tab-panel">
-              <div class="panel-grid">
-                <section class="panel">
-                  <div class="panel-header">
-                    <h3>全平台关键词出现率</h3>
-                  </div>
-                  <div id="globalSummary" class="summary-list"></div>
-                </section>
-                <section class="panel">
-                  <div class="panel-header">
-                    <h3>平台关键词表现</h3>
-                  </div>
-                  <div class="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>平台</th>
-                          <th>关键词</th>
-                          <th>出现</th>
-                          <th>出现率</th>
-                          <th>均排</th>
-                          <th>最佳</th>
-                        </tr>
-                      </thead>
-                      <tbody id="platformSummary"></tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
-            </section>
-
-            <section id="tab-questions" class="tab-panel hidden">
-              <section class="panel">
-                <div class="panel-header">
-                  <h3>问题列表</h3>
-                  <input id="questionSearch" class="search-input" placeholder="搜索问题" />
-                </div>
-                <div id="questionList" class="question-list"></div>
-              </section>
-            </section>
-
-            <section id="tab-keywords" class="tab-panel hidden">
-              <section class="panel">
-                <div class="panel-header">
-                  <h3>关键词列表</h3>
-                </div>
-                <div id="keywordGrid" class="keyword-grid"></div>
-              </section>
-            </section>
-
-            <section id="tab-answers" class="tab-panel hidden">
-              <section class="panel">
-                <div class="panel-header">
-                  <h3>回答记录</h3>
-                  <div class="filters">
-                    <select id="platformFilter"></select>
-                    <select id="statusFilter">
-                      <option value="">全部状态</option>
-                      <option value="success">success</option>
-                      <option value="partial_success">partial_success</option>
-                      <option value="failed">failed</option>
-                      <option value="timeout">timeout</option>
-                      <option value="blocked">blocked</option>
-                      <option value="login_required">login_required</option>
-                      <option value="empty_answer">empty_answer</option>
-                    </select>
-                  </div>
-                </div>
-                <div id="answerList" class="answer-list"></div>
-              </section>
-            </section>
-          </section>
-        </section>
-
-        <section id="view-config" class="view-panel hidden">
-          <datalist id="modelPresets">
-            <option value="gpt-5.1-chat">ChatGPT / OpenAI GPT-5.1 Chat</option>
-            <option value="gpt-4o">ChatGPT / OpenAI GPT-4o</option>
-            <option value="gemini-3-pro-preview">Gemini 3 Pro Preview</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-            <option value="ByteDance/doubao-seed-1.6">豆包 Doubao Seed 1.6</option>
-            <option value="ByteDance/doubao-1-5-pro-32k-250115">豆包 1.5 Pro 32K</option>
-            <option value="deepseek-ai/DeepSeek-V3.1">DeepSeek V3.1</option>
-            <option value="deepseek-ai/DeepSeek-R1">DeepSeek R1</option>
-            <option value="moonshotai/Kimi-K2-Instruct">Kimi K2 Instruct</option>
-            <option value="moonshotai/Kimi-K2-Thinking">Kimi K2 Thinking</option>
-            <option value="Qwen/Qwen3-Max">Qwen3 Max</option>
-            <option value="baidu/ernie-4.5-turbo-128k">ERNIE 4.5 Turbo</option>
-            <option value="zai-org/glm-4.6">GLM 4.6</option>
-          </datalist>
-
+          </header>
           <section class="panel">
-            <div class="panel-header">
-              <div>
-                <h3>查询方式</h3>
-                <p class="panel-note">本次运行所有请求只会使用一种方式。默认使用浏览器模式。</p>
-              </div>
+            <p class="panel-note">
+              输入目标品牌名和消费者意图后，系统会先生成 15 个消费者问题，并在已启用的 AI 网站中围绕这些问题进行查询，最终给出目标品牌和竞品品牌的 AI 提及率与推荐排名分析。
+            </p>
+            <p class="panel-note">当前可用平台：<strong id="enabledPlatformNames"></strong></p>
+            <div class="field-grid">
+              <label><span>目标品牌名（20字以内）</span><input id="brandName" placeholder="例如：怡宝" maxlength="20" /></label>
+              <label><span>消费者意图（50字以内）</span><input id="intention" placeholder="例如：纯净水" maxlength="50" /></label>
             </div>
-            <div class="mode-switch">
-              <label><input type="radio" name="runMode" value="browser" /> 浏览器网站</label>
-              <label><input type="radio" name="runMode" value="api" /> 接口 API</label>
-            </div>
+            <button id="generateQuestionsButton" class="primary-button">生成意向问题</button>
+            <p id="createMessage" class="panel-note"></p>
           </section>
 
-          <section id="browserConfigPanel" class="panel model-config-panel">
+          <section id="questionConfirmPanel" class="panel hidden">
             <div class="panel-header">
               <div>
-                <h3>AI 网站配置</h3>
-                <p id="configWebsiteCount" class="panel-note"></p>
+                <h3>确认问题和平台</h3>
+                <p class="panel-note">可以编辑单个问题，也可以取消不需要查询的平台；至少保留一个平台。</p>
               </div>
+              <button id="startMonitorButton" class="primary-button">开启监测</button>
             </div>
-            <pre id="loginLog" class="run-log compact-log">登录准备日志会显示在这里。点击某个网站的“准备登录”后，请手动登录并关闭弹出的浏览器窗口。</pre>
-            <div id="configWebsites" class="model-grid"></div>
-          </section>
-
-          <section id="apiConfigPanel" class="panel model-config-panel">
-            <div class="panel-header">
-              <div>
-                <h3>模型配置</h3>
-                <p id="configModelCount" class="panel-note"></p>
-              </div>
-              <button id="addModelButton" class="secondary-button">新增模型</button>
-            </div>
-            <div id="configModels" class="model-grid"></div>
-          </section>
-
-          <div class="panel-grid config-grid">
-            <section class="panel">
-              <div class="panel-header">
-                <div>
-                  <h3>问题配置</h3>
-                  <p id="configQuestionCount" class="panel-note"></p>
-                </div>
-              </div>
-              <label class="bulk-question-editor">
-                <span>每行一个问题，保存时自动生成 Q001、Q002...</span>
-                <textarea id="configQuestionsText" rows="18" placeholder="What are the best tool brands for home repair?&#10;Which power tool brands are good for small hardware stores?"></textarea>
-              </label>
-            </section>
-            <section class="panel">
-              <div class="panel-header">
-                <div>
-                  <h3>关键词配置</h3>
-                  <p id="configKeywordCount" class="panel-note"></p>
-                </div>
-                <button id="addKeywordButton" class="secondary-button">新增关键词</button>
-              </div>
-              <div id="configKeywords" class="config-list"></div>
-            </section>
-          </div>
-          <section class="panel config-actions-panel">
-            <div class="config-actions">
-              <div>
-                <strong id="configPath">配置文件</strong>
-                <p id="configStatus" class="panel-note">修改问题或关键词后点击保存。</p>
-              </div>
-              <button id="saveConfigButton" class="primary-button">保存配置</button>
-            </div>
+            <div id="platformChoices" class="pill-list"></div>
+            <div id="generatedQuestions" class="config-list"></div>
           </section>
         </section>
 
-        <section id="view-run" class="view-panel hidden">
-          <section class="panel run-panel">
+        <section id="resultsView" class="view-panel hidden">
+          <header class="topbar">
+            <div>
+              <div class="eyebrow">监控结果</div>
+              <h2>历史监测</h2>
+            </div>
+            <button id="refreshMonitorsButton" class="icon-button">↻</button>
+          </header>
+          <div class="results-layout">
+            <section class="panel">
+              <h3>监测列表</h3>
+              <div id="monitorList" class="run-list light"></div>
+            </section>
+            <section id="monitorDetail" class="detail-stack"></section>
+          </div>
+        </section>
+      </main>
+    </section>
+
+    <section id="adminRoot" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AD</div>
+          <div>
+            <h1>系统管理</h1>
+            <p>查询方式与 AI 网站配置</p>
+          </div>
+        </div>
+        <button id="adminLogoutButton" class="secondary-button full">退出管理</button>
+      </aside>
+      <main class="main">
+        <section id="adminLoginPanel" class="auth-card hidden">
+          <h2>输入管理密码</h2>
+          <label><span>管理密码</span><input id="adminPassword" type="password" placeholder="请输入管理密码" /></label>
+          <button id="adminLoginButton" class="primary-button">进入管理</button>
+          <p id="adminLoginMessage" class="panel-note"></p>
+        </section>
+        <section id="adminPanel" class="hidden">
+          <header class="topbar">
+            <div>
+              <div class="eyebrow">Admin</div>
+              <h2>系统管理</h2>
+            </div>
+            <button id="saveAdminConfigButton" class="primary-button">保存配置</button>
+          </header>
+          <section id="adminConfigPanel" class="panel hidden">
+            <h3>查询方式</h3>
+            <div class="mode-switch">
+              <label><input type="radio" name="adminRunMode" value="browser" /> 浏览器网站</label>
+              <label><input type="radio" name="adminRunMode" value="api" /> 接口 API</label>
+            </div>
+            <div class="field-grid compact-fields">
+              <label><span>浏览器并发数</span><input id="adminBrowserConcurrency" type="number" min="1" max="20" /></label>
+              <label><span>API 并发数</span><input id="adminApiConcurrency" type="number" min="1" max="20" /></label>
+            </div>
+            <p id="adminConfigMessage" class="panel-note"></p>
+          </section>
+          <section id="adminBrowserPanel" class="panel">
+            <h3>AI 网站配置</h3>
+            <pre id="adminLoginLog" class="run-log compact-log">登录准备日志会显示在这里。</pre>
+            <div id="adminWebsites" class="model-grid"></div>
+          </section>
+          <section id="adminApiPanel" class="panel hidden">
             <div class="panel-header">
-              <div>
-                <h3>运行任务</h3>
-                <p class="panel-note">使用当前配置立即执行一次监测。浏览器模式会使用已准备好的 Playwright Chromium 登录状态。</p>
-              </div>
-              <button id="startRunButton" class="primary-button">开始运行</button>
+              <h3>API 模型配置</h3>
+              <button id="addAdminModelButton" class="secondary-button">新增模型</button>
             </div>
-            <div class="run-status-grid">
-              <div class="metric">
-                <span>状态</span>
-                <strong id="runStatusText">Idle</strong>
-              </div>
-              <div class="metric">
-                <span>退出码</span>
-                <strong id="runExitCode">-</strong>
-              </div>
-            </div>
-            <pre id="runLog" class="run-log">尚未启动运行。</pre>
+            <div id="adminModels" class="model-grid"></div>
           </section>
         </section>
       </main>
-    </div>
+    </section>
 
-    <dialog id="answerDialog" class="answer-dialog">
-      <div class="dialog-header">
-        <div>
-          <div id="dialogMeta" class="eyebrow"></div>
-          <h3 id="dialogTitle"></h3>
-        </div>
-        <button id="closeDialog" class="icon-button" title="关闭">×</button>
-      </div>
-      <div id="dialogKeywords" class="dialog-keywords"></div>
-      <div class="dialog-body">
-        <article>
-          <h4>完整回答</h4>
-          <pre id="dialogAnswer"></pre>
-        </article>
-        <aside>
-          <h4>原始响应</h4>
-          <div id="dialogScreenshot" class="screenshot-box"></div>
-        </aside>
-      </div>
-    </dialog>
-
-    <script src="/app.js?v=browser-login-2"></script>
+    <script src="/app.js?v=user-monitor-1"></script>
   </body>
 </html>
