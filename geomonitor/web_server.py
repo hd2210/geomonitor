@@ -174,6 +174,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._require_admin()
                 self._json(self._config_payload())
                 return
+            if path == "/api/admin/users":
+                self._require_admin()
+                self._json({"users": self.store.list_users_with_monitors()})
+                return
             if path == "/api/runs":
                 self._require_admin()
                 self._json(self._list_runs())
@@ -252,13 +256,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._save_config(payload)
                 self._json({"status": "success", "config_path": str(self.config_path)})
                 return
+            if path == "/api/admin/user-quota":
+                self._require_admin()
+                payload = self._read_json_body()
+                user_id = int(payload.get("user_id") or 0)
+                quota_total = int(payload.get("quota_total") if payload.get("quota_total") is not None else -1)
+                if user_id <= 0:
+                    raise ValueError("user_id is required.")
+                self.store.update_user_quota(user_id, quota_total)
+                self._json({"status": "success", "users": self.store.list_users_with_monitors()})
+                return
             if path == "/api/monitor/generate-questions":
                 user = self._require_user()
                 payload = self._read_json_body()
                 brand_name = _limited_text(payload.get("brand_name"), "目标品牌名", 20)
                 intention = _limited_text(payload.get("intention"), "消费者意图", 50)
-                if self.store.monitor_count(int(user["id"])) >= 3:
-                    raise ValueError("每个手机号最多可创建 3 次监测。")
+                if self.store.remaining_quota(int(user["id"])) <= 0:
+                    raise ValueError("当前手机号可用监控次数不足。")
                 questions = AstraFlowLLMClient().generate_questions(brand_name, intention)
                 self._json(
                     {
@@ -267,7 +281,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             for index, question in enumerate(questions)
                         ],
                         "platforms": self._user_platforms()["platforms"],
-                        "remaining_quota": max(3 - self.store.monitor_count(int(user["id"])), 0),
+                        "remaining_quota": self.store.remaining_quota(int(user["id"])),
                     }
                 )
                 return

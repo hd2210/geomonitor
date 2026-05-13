@@ -31,6 +31,7 @@ function bindStaticEvents() {
   $("refreshMonitorsButton").addEventListener("click", loadMonitors);
   $("saveAdminConfigButton").addEventListener("click", saveAdminConfig);
   $("addAdminModelButton").addEventListener("click", addAdminModel);
+  $("refreshAdminUsersButton").addEventListener("click", loadAdminUsers);
   document.querySelectorAll("[data-user-view]").forEach((button) => {
     button.addEventListener("click", () => setUserView(button.dataset.userView));
   });
@@ -54,6 +55,7 @@ async function initUser() {
   $("loginRoot").classList.add("hidden");
   $("userRoot").classList.remove("hidden");
   $("userName").textContent = `${state.user.company_name} · ${state.user.phone}`;
+  setUserView("create");
   await loadPlatforms();
   await loadMonitors();
 }
@@ -66,7 +68,10 @@ async function initAdmin() {
   state.admin = me.authenticated;
   $("adminLoginPanel").classList.toggle("hidden", state.admin);
   $("adminPanel").classList.toggle("hidden", !state.admin);
-  if (state.admin) await loadAdminConfig();
+  if (state.admin) {
+    await loadAdminConfig();
+    await loadAdminUsers();
+  }
 }
 
 async function sendCode() {
@@ -220,6 +225,7 @@ function startMonitorPolling(monitorId) {
 
 async function loadMonitors() {
   const monitors = await fetchJson("/api/monitors");
+  updateMonitorQuota(monitors);
   $("monitorList").innerHTML = monitors.map((monitor) => `
     <button class="monitor-item" data-monitor-id="${monitor.id}">
       <strong>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</strong>
@@ -233,6 +239,12 @@ async function loadMonitors() {
     state.currentMonitorId = monitors[0].id;
     await loadMonitorDetail(state.currentMonitorId);
   }
+}
+
+function updateMonitorQuota(monitors) {
+  const quotaTotal = Number(state.user?.quota_total ?? 3);
+  const quota = Math.max(quotaTotal - monitors.length, 0);
+  $("monitorQuota").textContent = `可用监控次数：${quota}`;
 }
 
 async function loadMonitorDetail(id) {
@@ -406,6 +418,55 @@ function setUserView(view) {
 async function loadAdminConfig() {
   state.config = await fetchJson("/api/admin/config");
   renderAdminConfig();
+}
+
+async function loadAdminUsers() {
+  const payload = await fetchJson("/api/admin/users");
+  renderAdminUsers(payload.users || []);
+}
+
+function renderAdminUsers(users) {
+  $("adminUsersPanel").classList.remove("hidden");
+  $("adminUsers").innerHTML = users.map((user) => `
+    <article class="admin-user-card" data-admin-user="${escapeHtml(user.id)}">
+      <div class="admin-user-head">
+        <div>
+          <strong>${escapeHtml(user.company_name)}</strong>
+          <span>${escapeHtml(user.phone)} · 注册 ${escapeHtml(user.created_at)} · 最近登录 ${escapeHtml(user.last_login_at)}</span>
+        </div>
+        <div class="quota-editor">
+          <label><span>可创建总次数</span><input class="admin-user-quota" type="number" min="0" max="999" value="${escapeHtml(user.quota_total ?? 3)}" /></label>
+          <button class="secondary-button admin-save-quota" type="button">保存次数</button>
+        </div>
+      </div>
+      <p class="panel-note">已创建 ${escapeHtml(user.monitor_count || 0)} 次，可用 ${escapeHtml(user.remaining_quota || 0)} 次。</p>
+      <div class="admin-monitor-list">
+        ${(user.monitors || []).map((monitor) => `
+          <div class="admin-monitor-row">
+            <div>
+              <strong>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</strong>
+              <span>${escapeHtml(monitor.status)} · 创建 ${escapeHtml(monitor.created_at)}${monitor.completed_at ? ` · 完成 ${escapeHtml(monitor.completed_at)}` : ""}</span>
+            </div>
+            <span class="badge">${escapeHtml(monitor.run_id || "no run")}</span>
+          </div>
+        `).join("") || `<div class="empty-state compact">暂无监测任务</div>`}
+      </div>
+    </article>
+  `).join("") || `<div class="empty-state compact">暂无注册用户</div>`;
+  document.querySelectorAll("[data-admin-user]").forEach((card) => {
+    card.querySelector(".admin-save-quota").addEventListener("click", () => saveUserQuota(card));
+  });
+}
+
+async function saveUserQuota(card) {
+  const userId = Number(card.dataset.adminUser);
+  const quotaTotal = Number(card.querySelector(".admin-user-quota").value || 0);
+  await fetchJson("/api/admin/user-quota", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({user_id: userId, quota_total: quotaTotal}),
+  });
+  await loadAdminUsers();
 }
 
 function renderAdminConfig() {

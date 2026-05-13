@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 data/browser-profiles/
+data/ai_visibility_monitor/runs/
 
 # Playwright
 node_modules/

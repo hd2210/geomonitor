@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Visibility Monitor</title>
-    <link rel="stylesheet" href="/styles.css?v=user-monitor-1" />
+    <title>AI可见度监测</title>
+    <link rel="stylesheet" href="/styles.css?v=user-monitor-5" />
   </head>
   <body>
     <section id="loginRoot" class="auth-shell hidden">
       <div class="auth-card">
         <div class="brand">
-          <div class="brand-mark">AI</div>
+          <img class="brand-logo compact" src="/about-logo.80b76a30.png" alt="云智科技" />
           <div>
-            <h1>AI Visibility Monitor</h1>
+            <h1>AI可见度监测</h1>
             <p>登录后创建 AI 提及率监测</p>
           </div>
         </div>
@@ -28,33 +28,34 @@
     </section>
 
     <section id="userRoot" class="app-shell hidden">
-      <aside class="sidebar">
+      <header class="app-header">
         <div class="brand">
-          <div class="brand-mark">AI</div>
           <div>
-            <h1>Visibility Monitor</h1>
-            <p id="userName">用户</p>
+            <h1>AI可见度监测</h1>
           </div>
         </div>
         <nav class="primary-nav">
           <button class="primary-nav-item active" data-user-view="create">创建AI监测</button>
           <button class="primary-nav-item" data-user-view="results">监控结果</button>
         </nav>
-        <button id="logoutButton" class="secondary-button full">退出登录</button>
-      </aside>
+        <div class="user-actions">
+          <span id="monitorQuota" class="quota-pill">可用监控次数：--</span>
+          <span id="userName" class="user-identity">用户</span>
+          <button id="logoutButton" class="secondary-button">退出登录</button>
+        </div>
+      </header>
       <main class="main">
         <section id="createView" class="view-panel">
           <header class="topbar">
             <div>
-              <div class="eyebrow">创建AI监测</div>
               <h2>输入品牌和消费者意图</h2>
             </div>
           </header>
           <section class="panel">
-            <p class="panel-note">
+            <p class="panel-note create-intro">
               输入目标品牌名和消费者意图后，系统会先生成 15 个消费者问题，并在已启用的 AI 网站中围绕这些问题进行查询，最终给出目标品牌和竞品品牌的 AI 提及率与推荐排名分析。
             </p>
-            <p class="panel-note">当前可用平台：<strong id="enabledPlatformNames"></strong></p>
+            <p class="panel-note create-intro">当前可用平台：<strong id="enabledPlatformNames"></strong></p>
             <div class="field-grid">
               <label><span>目标品牌名（20字以内）</span><input id="brandName" placeholder="例如：怡宝" maxlength="20" /></label>
               <label><span>消费者意图（50字以内）</span><input id="intention" placeholder="例如：纯净水" maxlength="50" /></label>
@@ -93,9 +94,12 @@
           </div>
         </section>
       </main>
+      <footer class="app-footer">
+        <img class="footer-logo" src="/about-logo.80b76a30.png" alt="云智科技" />
+      </footer>
     </section>
 
-    <section id="adminRoot" class="app-shell hidden">
+    <section id="adminRoot" class="admin-shell hidden">
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">AD</div>
@@ -133,6 +137,16 @@
             </div>
             <p id="adminConfigMessage" class="panel-note"></p>
           </section>
+          <section id="adminUsersPanel" class="panel hidden">
+            <div class="panel-header">
+              <div>
+                <h3>注册用户与监测结果</h3>
+                <p class="panel-note">查看所有注册用户、监测任务，并调整用户可创建监测总次数。</p>
+              </div>
+              <button id="refreshAdminUsersButton" class="secondary-button" type="button">刷新用户</button>
+            </div>
+            <div id="adminUsers" class="admin-user-list"></div>
+          </section>
           <section id="adminBrowserPanel" class="panel">
             <h3>AI 网站配置</h3>
             <pre id="adminLoginLog" class="run-log compact-log">登录准备日志会显示在这里。</pre>
@@ -149,6 +163,6 @@
       </main>
     </section>
 
-    <script src="/app.js?v=user-monitor-1"></script>
+    <script src="/app.js?v=user-monitor-5"></script>
   </body>
 </html>

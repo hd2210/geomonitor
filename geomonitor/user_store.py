@@ -31,6 +31,7 @@ class UserStore:
                   id integer primary key autoincrement,
                   phone text not null unique,
                   company_name text not null,
+                  quota_total integer not null default 3,
                   created_at text not null,
                   last_login_at text not null
                 );
@@ -72,6 +73,13 @@ class UserStore:
                 );
                 """
             )
+            self._ensure_column(db, "users", "quota_total", "integer not null default 3")
+
+    @staticmethod
+    def _ensure_column(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in db.execute(f"pragma table_info({table})").fetchall()}
+        if column not in columns:
+            db.execute(f"alter table {table} add column {column} {definition}")
 
     def save_code(self, phone: str, company_name: str | None, code: str = "123456") -> None:
         with self._connect() as db:
@@ -139,6 +147,36 @@ class UserStore:
             row = db.execute("select count(*) as count from monitors where user_id = ?", (user_id,)).fetchone()
             return int(row["count"] if row else 0)
 
+    def quota_total(self, user_id: int) -> int:
+        with self._connect() as db:
+            row = db.execute("select quota_total from users where id = ?", (user_id,)).fetchone()
+            return int(row["quota_total"] if row else 3)
+
+    def remaining_quota(self, user_id: int) -> int:
+        return max(self.quota_total(user_id) - self.monitor_count(user_id), 0)
+
+    def update_user_quota(self, user_id: int, quota_total: int) -> None:
+        if quota_total < 0:
+            raise ValueError("可用监控总次数不能小于 0。")
+        with self._connect() as db:
+            cursor = db.execute("update users set quota_total = ? where id = ?", (quota_total, user_id))
+            if cursor.rowcount == 0:
+                raise ValueError("用户不存在。")
+
+    def list_users_with_monitors(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            users = db.execute("select * from users order by id desc").fetchall()
+            rows: list[dict[str, Any]] = []
+            for user in users:
+                data = _row_dict(user) or {}
+                monitors = db.execute("select * from monitors where user_id = ? order by id desc", (data["id"],)).fetchall()
+                monitor_rows = [_monitor_dict(row) for row in monitors]
+                data["monitor_count"] = len(monitor_rows)
+                data["remaining_quota"] = max(int(data.get("quota_total") or 3) - len(monitor_rows), 0)
+                data["monitors"] = monitor_rows
+                rows.append(data)
+            return rows
+
     def create_monitor(
         self,
         user_id: int,
@@ -147,8 +185,8 @@ class UserStore:
         selected_platforms: list[str],
         questions: list[dict[str, str]],
     ) -> dict[str, Any]:
-        if self.monitor_count(user_id) >= 3:
-            raise ValueError("每个手机号最多可创建 3 次监测。")
+        if self.remaining_quota(user_id) <= 0:
+            raise ValueError("当前手机号可用监控次数不足。")
         current = now_iso()
         with self._connect() as db:
             cursor = db.execute(
