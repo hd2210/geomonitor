@@ -516,6 +516,13 @@ textarea {
   align-items: center;
 }
 
+.answer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .config-grid {
   align-items: start;
 }
@@ -694,6 +701,53 @@ textarea {
   white-space: nowrap;
 }
 
+.citation-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.citation-sources,
+.citation-pages {
+  display: grid;
+  gap: 10px;
+}
+
+.citation-source,
+.citation-page {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.citation-source.active,
+.citation-source:hover,
+.citation-page:hover {
+  border-color: rgba(15, 123, 108, 0.34);
+  background: var(--accent-weak);
+}
+
+.citation-source strong,
+.citation-source span,
+.citation-page strong,
+.citation-page span {
+  display: block;
+}
+
+.citation-source span,
+.citation-page span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .badge-row,
 .dialog-keywords {
   display: flex;
@@ -842,7 +896,8 @@ pre {
 
   .metrics-grid,
   .panel-grid,
-  .dialog-body {
+  .dialog-body,
+  .citation-layout {
     grid-template-columns: 1fr;
   }
 

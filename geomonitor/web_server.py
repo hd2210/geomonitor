@@ -273,7 +273,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 intention = _limited_text(payload.get("intention"), "消费者意图", 50)
                 if self.store.remaining_quota(int(user["id"])) <= 0:
                     raise ValueError("当前手机号可用监控次数不足。")
-                questions = AstraFlowLLMClient().generate_questions(brand_name, intention)
+                question_count = parse_config(_read_json_file(self.config_path)).runner.question_count
+                questions = AstraFlowLLMClient().generate_questions(brand_name, intention, question_count=question_count)
                 self._json(
                     {
                         "questions": [
@@ -281,6 +282,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             for index, question in enumerate(questions)
                         ],
                         "platforms": self._user_platforms()["platforms"],
+                        "question_count": len(questions),
                         "remaining_quota": self.store.remaining_quota(int(user["id"])),
                     }
                 )
@@ -306,6 +308,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if not monitor:
                     raise FileNotFoundError("monitor not found")
                 self.monitor_jobs.retry_failed(monitor_id)
+                self._json({"status": "started", "monitor": monitor})
+                return
+            if path == "/api/monitor/retry-answer":
+                user = self._require_user()
+                payload = self._read_json_body()
+                monitor_id = int(payload.get("monitor_id") or 0)
+                platform_id = str(payload.get("platform_id", "")).strip()
+                question_id = str(payload.get("question_id", "")).strip()
+                if monitor_id <= 0 or not platform_id or not question_id:
+                    raise ValueError("monitor_id, platform_id and question_id are required.")
+                monitor = self.store.get_monitor(monitor_id, user_id=int(user["id"]))
+                if not monitor:
+                    raise FileNotFoundError("monitor not found")
+                self.monitor_jobs.retry_answer(monitor_id, platform_id, question_id)
                 self._json({"status": "started", "monitor": monitor})
                 return
             if path == "/api/config":
@@ -387,6 +403,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         platforms = parsed.ai_platforms
         return {
             "run_mode": parsed.run_mode,
+            "question_count": parsed.runner.question_count,
             "platforms": [
                 {
                     "platform_id": platform.platform_id,
@@ -440,6 +457,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         analyses = _read_jsonl(run_dir / "keyword_analysis.jsonl")
         platform_summary = _read_csv(run_dir / "platform_summary.csv")
         global_summary = _read_csv(run_dir / "global_summary.csv")
+        citation_summary = _read_csv(run_dir / "citation_summary.csv")
+        citation_pages = _read_csv(run_dir / "citation_pages.csv")
         report = (run_dir / "report.md").read_text(encoding="utf-8") if (run_dir / "report.md").exists() else ""
         return {
             "run_id": run_id,
@@ -447,17 +466,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "analyses": analyses,
             "platform_summary": platform_summary,
             "global_summary": global_summary,
+            "citation_summary": citation_summary,
+            "citation_pages": citation_pages,
             "report": report,
         }
 
     def _config_payload(self) -> dict:
         config = _read_json_file(self.config_path)
+        parsed = parse_config(config)
         return {
             "config_path": str(self.config_path),
             "run_mode": config.get("run_mode", "browser"),
             "questions": config.get("questions", []),
             "target_keywords": _normalize_keywords(config.get("target_keywords", [])),
-            "browser_platforms": config.get("browser_platforms") or browser_platform_defaults(),
+            "browser_platforms": [_platform_to_config(platform) for platform in parsed.browser_platforms],
             "api_platforms": config.get("api_platforms") or [p for p in config.get("ai_platforms", []) if isinstance(p, dict) and p.get("method") == "api"],
             "schedule": config.get("schedule"),
             "runner": config.get("runner", {}),
@@ -624,6 +646,20 @@ def _normalize_keywords(value) -> list[dict]:
     return normalized
 
 
+def _platform_to_config(platform) -> dict:
+    payload = {
+        "platform_id": platform.platform_id,
+        "platform_name": platform.platform_name,
+        "url": platform.url,
+        "method": platform.method,
+        "enabled": platform.enabled,
+        "new_chat_url": platform.new_chat_url,
+        "selectors": asdict(platform.selectors),
+        "citation_triggers": list(platform.citation_triggers),
+    }
+    return {key: value for key, value in payload.items() if value not in (None, "", [])}
+
+
 def _validate_questions(value) -> list[dict]:
     if not isinstance(value, list):
         raise ValueError("questions must be a list.")
@@ -731,6 +767,9 @@ def _validate_browser_platforms(value) -> list[dict]:
             "method": "browser",
             "enabled": bool(item.get("enabled", False)),
         }
+        citation_triggers = _validate_citation_triggers(item.get("citation_triggers"))
+        if citation_triggers:
+            platform["citation_triggers"] = citation_triggers
         new_chat_url = str(item.get("new_chat_url", "")).strip()
         if new_chat_url:
             platform["new_chat_url"] = new_chat_url
@@ -745,13 +784,39 @@ def _validate_browser_platforms(value) -> list[dict]:
     return platforms
 
 
+def _validate_citation_triggers(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.splitlines()
+    elif isinstance(value, list):
+        raw = []
+        for item in value:
+            raw.extend(str(item).splitlines())
+    else:
+        raise ValueError("citation_triggers must be text or a list.")
+    seen: set[str] = set()
+    triggers: list[str] = []
+    for item in raw:
+        trigger = str(item).strip()
+        key = trigger.casefold()
+        if trigger and key not in seen:
+            seen.add(key)
+            triggers.append(trigger)
+    return triggers
+
+
 def _validate_runner(value) -> dict:
     if value is None:
         return {}
     if not isinstance(value, dict):
         raise ValueError("runner must be an object.")
     runner: dict[str, int] = {}
-    for key, default in (("browser_concurrency", 2), ("api_concurrency", 5)):
+    for key, default, maximum in (
+        ("browser_concurrency", 2, 20),
+        ("api_concurrency", 5, 20),
+        ("question_count", 15, 50),
+    ):
         raw = value.get(key, default)
         try:
             number = int(raw)
@@ -759,5 +824,5 @@ def _validate_runner(value) -> dict:
             raise ValueError(f"runner.{key} must be a number.") from exc
         if number <= 0:
             raise ValueError(f"runner.{key} must be positive.")
-        runner[key] = min(number, 20)
+        runner[key] = min(number, maximum)
     return runner

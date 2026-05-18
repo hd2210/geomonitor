@@ -15,7 +15,7 @@ from .env_loader import load_env_file
 QUESTION_PROMPT_TEMPLATE = """你是一个消费者AI提问路径设计专家，擅长分析目标用户在豆包、ChatGPT、Kimi、文心一言等AI平台上的真实提问方式。
 
 任务：
-给定一个【目标品牌词】和一个【消费者意图】，生成 15 个不重复的消费者问题。
+给定一个【目标品牌词】和一个【消费者意图】，生成 {question_count} 个不重复的消费者问题。
 
 目标：
 这些问题要符合目标用户群体的真实口语表达，并且能够提升【目标品牌词】在 AI 回答中自然出现的可能性。
@@ -57,14 +57,14 @@ QUESTION_PROMPT_TEMPLATE = """你是一个消费者AI提问路径设计专家，
 5. 生成的问题中，不能直接出现【目标品牌词】本身。
 6. 问题设计必须以“提升目标品牌词在AI回答中自然出现的概率”为导向。
 7. 不要把问题写得过于宽泛，多写“推荐什么”“哪个更适合”“一般会选什么”“重点看什么”“哪类更值得优先考虑”这类更容易导向具体回答的问题。
-8. 15 个问题之间要有明显区分，不能只是同一句话做轻微改写。
+8. {question_count} 个问题之间要有明显区分，不能只是同一句话做轻微改写。
 9. 问题应贴近真实决策路径，可自然覆盖需求表达、推荐请求、选择咨询、对比判断、决策确认。
 10. 问题语气要贴近自动推断出的目标用户群体。
-11. 不要输出解释，不要输出分析，不要加小标题，不要复述规则，只直接输出最终的 15 个问题。
+11. 不要输出解释，不要输出分析，不要加小标题，不要复述规则，只直接输出最终的 {question_count} 个问题。
 12. 输出格式为阿拉伯数字编号列表，每行一个问题。
 
 额外要求：
-生成前请先自检：这15个问题是否真的能让AI更容易回答出目标品牌词，而不是只会给出泛泛建议；如果不能，请重写，直到每个问题都明显指向更具体的回答对象。
+生成前请先自检：这{question_count}个问题是否真的能让AI更容易回答出目标品牌词，而不是只会给出泛泛建议；如果不能，请重写，直到每个问题都明显指向更具体的回答对象。
 """
 
 
@@ -103,12 +103,16 @@ class AstraFlowLLMClient:
         if not self.api_key:
             raise RuntimeError("Missing ASTRAFLOW_API_KEY in .env.")
 
-    def generate_questions(self, brand_name: str, intention: str) -> list[str]:
-        text = self._chat(QUESTION_PROMPT_TEMPLATE.format(brandname=brand_name, intention=intention), web_search=True)
+    def generate_questions(self, brand_name: str, intention: str, question_count: int = 15) -> list[str]:
+        count = max(1, min(int(question_count), 50))
+        text = self._chat(
+            QUESTION_PROMPT_TEMPLATE.format(brandname=brand_name, intention=intention, question_count=count),
+            web_search=True,
+        )
         questions = _parse_numbered_questions(text)
-        if len(questions) < 15:
-            raise RuntimeError(f"GPT-5.5 only returned {len(questions)} questions.")
-        return questions[:15]
+        if len(questions) < count:
+            raise RuntimeError(f"Only returned {len(questions)} questions.")
+        return questions[:count]
 
     def extract_competitors(self, brand_name: str, intention: str, answers: list[dict[str, Any]]) -> dict[str, Any]:
         compact_answers = []
@@ -165,7 +169,7 @@ class AstraFlowLLMClient:
 def _parse_numbered_questions(text: str) -> list[str]:
     questions: list[str] = []
     for line in text.splitlines():
-        cleaned = re.sub(r"^\s*\d{1,2}[\.)、]\s*", "", line).strip()
+        cleaned = re.sub(r"^\s*\d{1,3}[\.)、]\s*", "", line).strip()
         cleaned = cleaned.strip("-• \t")
         if cleaned:
             questions.append(cleaned)

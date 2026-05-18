@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI可见度监测</title>
-    <link rel="stylesheet" href="/styles.css?v=user-monitor-5" />
+    <link rel="stylesheet" href="/styles.css?v=user-monitor-7" />
   </head>
   <body>
     <section id="loginRoot" class="auth-shell hidden">
@@ -53,7 +53,7 @@
           </header>
           <section class="panel">
             <p class="panel-note create-intro">
-              输入目标品牌名和消费者意图后，系统会先生成 15 个消费者问题，并在已启用的 AI 网站中围绕这些问题进行查询，最终给出目标品牌和竞品品牌的 AI 提及率与推荐排名分析。
+              输入目标品牌名和消费者意图后，系统会先生成 <span id="configuredQuestionCount">15</span> 个消费者问题，并在已启用的 AI 网站中围绕这些问题进行查询，最终给出目标品牌和竞品品牌的 AI 提及率与推荐排名分析。
             </p>
             <p class="panel-note create-intro">当前可用平台：<strong id="enabledPlatformNames"></strong></p>
             <div class="field-grid">
@@ -134,6 +134,7 @@
             <div class="field-grid compact-fields">
               <label><span>浏览器并发数</span><input id="adminBrowserConcurrency" type="number" min="1" max="20" /></label>
               <label><span>API 并发数</span><input id="adminApiConcurrency" type="number" min="1" max="20" /></label>
+              <label><span>生成问题数量</span><input id="adminQuestionCount" type="number" min="1" max="50" /></label>
             </div>
             <p id="adminConfigMessage" class="panel-note"></p>
           </section>
@@ -163,6 +164,6 @@
       </main>
     </section>
 
-    <script src="/app.js?v=user-monitor-5"></script>
+    <script src="/app.js?v=user-monitor-7"></script>
   </body>
 </html>

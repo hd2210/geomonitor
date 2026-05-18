@@ -42,6 +42,14 @@ class MonitorJobManager:
         thread = threading.Thread(target=self._retry_worker, args=(monitor_id,), daemon=True)
         thread.start()
 
+    def retry_answer(self, monitor_id: int, platform_id: str, question_id: str) -> None:
+        with self.lock:
+            if monitor_id in self.running:
+                raise ValueError("监测任务已经在运行。")
+            self.running.add(monitor_id)
+        thread = threading.Thread(target=self._retry_answer_worker, args=(monitor_id, platform_id, question_id), daemon=True)
+        thread.start()
+
     def _worker(self, monitor_id: int) -> None:
         try:
             asyncio.run(self._run(monitor_id))
@@ -52,6 +60,13 @@ class MonitorJobManager:
     def _retry_worker(self, monitor_id: int) -> None:
         try:
             asyncio.run(self._retry_failed(monitor_id))
+        finally:
+            with self.lock:
+                self.running.discard(monitor_id)
+
+    def _retry_answer_worker(self, monitor_id: int, platform_id: str, question_id: str) -> None:
+        try:
+            asyncio.run(self._retry_single_answer(monitor_id, platform_id, question_id))
         finally:
             with self.lock:
                 self.running.discard(monitor_id)
@@ -178,6 +193,94 @@ class MonitorJobManager:
                 error_message=str(exc),
                 progress_message=f"重试失败：{exc}",
                 notification_message=f"模拟短信：您的 AI 监测任务重试失败：{exc}",
+            )
+
+    async def _retry_single_answer(self, monitor_id: int, platform_id: str, question_id: str) -> None:
+        monitor = self.store.get_monitor(monitor_id)
+        if not monitor:
+            return
+        run_id = str(monitor.get("run_id") or "")
+        if not run_id:
+            raise RuntimeError("当前监测还没有可重试的 run_id。")
+        try:
+            config = load_config(self.config_path)
+            selected = set(monitor["selected_platforms"])
+            platform = next((item for item in config.ai_platforms if item.platform_id == platform_id and item.platform_id in selected), None)
+            question = next(
+                (
+                    Question(question_id=item["question_id"], question=item["question"])
+                    for item in monitor["questions"]
+                    if item["question_id"] == question_id
+                ),
+                None,
+            )
+            if platform is None or question is None:
+                raise RuntimeError(f"找不到要重试的平台或问题：{platform_id}/{question_id}")
+
+            run_dir = Path(monitor.get("run_dir") or config.output_dir.format(run_id=run_id))
+            storage = AnswerStorage(run_dir)
+            storage.prepare()
+            existing_answers = read_raw_answers(storage.raw_answers_path)
+            existing_answer = next(
+                (answer for answer in existing_answers if answer.platform_id == platform_id and answer.question_id == question_id),
+                None,
+            )
+            self.store.update_monitor(
+                monitor_id,
+                status="retrying",
+                error_message=None,
+                completed_at=None,
+                progress_current=0,
+                progress_total=1,
+                progress_message=f"正在单条重试：{platform.platform_name}/{question.question_id}",
+                notification_message=None,
+            )
+            if existing_answer and _can_refresh_answer_artifacts(existing_answer) and platform.method == "browser":
+                screenshot_path, html_path = storage.answer_paths(platform.platform_id, question.question_id)
+                refreshed_answer = await AIPlatformRunner(config.runner).refresh_answer_artifacts(
+                    existing_answer,
+                    platform,
+                    screenshot_path,
+                    html_path,
+                )
+                merged_answers = _replace_answer_records(existing_answers, [refreshed_answer])
+                storage.rewrite_answers(merged_answers)
+                platforms = [item for item in config.ai_platforms if item.platform_id in selected]
+                StatisticsReporter(run_id, platforms, []).write_citation_outputs(run_dir, merged_answers)
+                self.store.update_monitor(
+                    monitor_id,
+                    status="completed",
+                    completed_at=now_iso(),
+                    progress_current=1,
+                    progress_total=1,
+                    progress_message="单条补采集完成，已保留原有品牌统计",
+                    error_message=None,
+                    notification_message=f"模拟短信：您的 AI 监测任务 {run_id} 单条补采集已完成。",
+                )
+                return
+
+            retried_answers, _ = await self._collect_answer_pairs(monitor_id, run_id, [(platform, question)], storage, config.runner)
+            merged_answers = _replace_answer_records(existing_answers, retried_answers)
+            storage.rewrite_answers(merged_answers)
+            platforms = [item for item in config.ai_platforms if item.platform_id in selected]
+            await self._finalize_analysis(
+                monitor_id,
+                monitor,
+                run_id,
+                run_dir,
+                platforms,
+                merged_answers,
+                config.runner.timeout_seconds,
+                "单条重试完成，统计已更新",
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.store.update_monitor(
+                monitor_id,
+                status="failed",
+                completed_at=now_iso(),
+                error_message=str(exc),
+                progress_message=f"单条重试失败：{exc}",
+                notification_message=f"模拟短信：您的 AI 监测任务单条重试失败：{exc}",
             )
 
     async def _collect_answers(
@@ -389,6 +492,14 @@ def _replace_answer_records(existing: list[AnswerRecord], replacements: list[Ans
             merged.append(answer)
             seen.add(pair)
     return merged
+
+
+def _can_refresh_answer_artifacts(answer: AnswerRecord) -> bool:
+    if answer.status != "partial_success" or not answer.answer_text or not answer.answer_url:
+        return False
+    if answer.error_message:
+        return False
+    return bool(answer.screenshot_error or answer.citation_error)
 
 
 def _retry_progress_message(runner_config, retry_pairs: list[tuple[AIPlatform, Question]]) -> str:

@@ -181,9 +181,32 @@ def _parse_platforms(value: Any, forced_method: str | None = None) -> list[AIPla
                 api_base_url=_optional_str(item, "api_base_url"),
                 web_search=bool(item.get("web_search", True)),
                 web_search_vendor=_optional_str(item, "web_search_vendor"),
+                citation_triggers=_parse_citation_triggers(item.get("citation_triggers")),
             )
         )
     return platforms
+
+
+def _parse_citation_triggers(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raw = value.splitlines()
+    elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+        raw = []
+        for item in value:
+            raw.extend(item.splitlines())
+    else:
+        raise ConfigError("citation_triggers must be a string or list of strings.")
+    seen: set[str] = set()
+    triggers: list[str] = []
+    for item in raw:
+        trigger = item.strip()
+        key = trigger.casefold()
+        if trigger and key not in seen:
+            seen.add(key)
+            triggers.append(trigger)
+    return tuple(triggers)
 
 
 def _parse_selectors(value: Any) -> PlatformSelectors:
@@ -214,6 +237,10 @@ def _parse_runner(value: Any) -> RunnerConfig:
         raise ConfigError("runner.browser_concurrency must be positive.")
     if runner.api_concurrency <= 0:
         raise ConfigError("runner.api_concurrency must be positive.")
+    if runner.question_count <= 0:
+        raise ConfigError("runner.question_count must be positive.")
+    if runner.question_count > 50:
+        raise ConfigError("runner.question_count cannot exceed 50.")
     return runner
 
 

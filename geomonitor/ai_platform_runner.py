@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .models import AIPlatform, AnswerRecord, Question, RunnerConfig
 
 
-COMMON_BLOCKED_TEXTS = (
+HUMAN_VERIFICATION_TEXTS = (
     "verify you are human",
     "checking if the site connection is secure",
     "please verify you are human",
@@ -17,13 +19,7 @@ COMMON_BLOCKED_TEXTS = (
     "正在检查您是否是真人",
     "验证码",
     "安全检查",
-    "安全审核",
-    "内容安全",
     "安全验证",
-    "风险审核",
-    "风险提示",
-    "违反相关",
-    "风控",
     "unusual traffic",
 )
 
@@ -81,15 +77,14 @@ class AIPlatformRunner:
                         await self._pause_for_blocked_debug(page, base.status, base.error_message)
                         return base
 
-                    status = await self._detect_blockers(page, platform)
-                    if status:
-                        base.status = status[0]
-                        base.error_message = status[1]
+                    await self._submit_question(page, platform, question.question)
+                    popup_closed, popup_error = await _close_blocking_popups(page)
+                    if not popup_closed:
+                        base.status = "blocked"
+                        base.error_message = popup_error or "Blocking popup could not be closed after submitting question."
                         await self._save_html(page, html_path, base)
                         await self._pause_for_blocked_debug(page, base.status, base.error_message)
                         return base
-
-                    await self._submit_question(page, platform, question.question)
                     answer_text = await self._wait_and_extract_answer(page, platform)
                     await self._save_html(page, html_path, base)
 
@@ -99,6 +94,7 @@ class AIPlatformRunner:
                         return base
 
                     base.answer_text = answer_text
+                    base.answer_url = page.url
                     base.raw_html_path = _relative_run_path(html_path)
                     try:
                         await self._screenshot_answer(page, platform, screenshot_path)
@@ -107,6 +103,11 @@ class AIPlatformRunner:
                     except Exception as exc:  # noqa: BLE001
                         base.status = "partial_success"
                         base.screenshot_error = str(exc)
+                    try:
+                        base.citations = await self._extract_citations(page, platform)
+                    except Exception as exc:  # noqa: BLE001
+                        base.citation_error = str(exc)
+                        base.status = "partial_success"
                     return base
                 except (PlaywrightTimeoutError, TimeoutError) as exc:
                     base.status = "timeout"
@@ -129,6 +130,78 @@ class AIPlatformRunner:
             base.status = "failed"
             base.error_message = str(exc)
             return base
+
+    async def refresh_answer_artifacts(
+        self,
+        record: AnswerRecord,
+        platform: AIPlatform,
+        screenshot_path: Path,
+        html_path: Path,
+    ) -> AnswerRecord:
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        refreshed = AnswerRecord(
+            run_id=record.run_id,
+            timestamp=timestamp,
+            platform_id=record.platform_id,
+            platform_name=record.platform_name,
+            question_id=record.question_id,
+            question=record.question,
+            answer_text=record.answer_text,
+            answer_url=record.answer_url,
+            screenshot_path=record.screenshot_path,
+            raw_html_path=record.raw_html_path,
+            raw_response_path=record.raw_response_path,
+            status=record.status,
+            error_message=record.error_message,
+            screenshot_error=None,
+            citations=list(record.citations or []),
+            citation_error=None,
+        )
+        if not refreshed.answer_url:
+            raise RuntimeError("This answer has no saved answer_url.")
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            refreshed.status = "failed"
+            refreshed.error_message = "Playwright is not installed. Run: pip install -r requirements.txt"
+            return refreshed
+
+        profile_dir = Path(self.config.browser_profile_dir) / platform.platform_id
+        profile_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            async with async_playwright() as playwright:
+                context, page, should_close_context = await self._open_context_and_page(playwright, profile_dir)
+                page.set_default_timeout(self.config.timeout_seconds * 1000)
+                try:
+                    await page.goto(refreshed.answer_url, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(1500)
+                    await _close_blocking_popups(page)
+                    await self._save_html(page, html_path, refreshed)
+                    refreshed.answer_url = page.url
+                    try:
+                        await self._screenshot_answer(page, platform, screenshot_path)
+                        refreshed.screenshot_path = _relative_run_path(screenshot_path)
+                    except Exception as exc:  # noqa: BLE001
+                        refreshed.screenshot_error = str(exc)
+                    try:
+                        refreshed.citations = await self._extract_citations(page, platform)
+                    except Exception as exc:  # noqa: BLE001
+                        refreshed.citation_error = str(exc)
+                    refreshed.status = "success" if not refreshed.screenshot_error and not refreshed.citation_error else "partial_success"
+                    refreshed.error_message = None
+                    return refreshed
+                finally:
+                    if should_close_context:
+                        await context.close()
+                    else:
+                        await page.close()
+        except Exception as exc:  # noqa: BLE001
+            refreshed.status = "partial_success"
+            refreshed.error_message = None
+            refreshed.citation_error = refreshed.citation_error or str(exc)
+            return refreshed
 
     async def random_delay(self) -> None:
         delay = random.uniform(self.config.min_delay_seconds, self.config.max_delay_seconds)
@@ -205,6 +278,8 @@ class AIPlatformRunner:
         if input_locator is None:
             await _try_open_new_conversation_from_page(page, platform)
             input_locator = await _first_visible_locator(page, platform.selectors.input, timeout=5000)
+        if input_locator is None and platform.platform_id == "yuanbao":
+            input_locator = await _find_yuanbao_input(page, timeout=6000)
         if input_locator is None:
             return "blocked", f"Input selector was not visible after trying to open a new conversation: {platform.selectors.input}"
 
@@ -214,6 +289,12 @@ class AIPlatformRunner:
         return None
 
     async def _open_new_conversation(self, page, platform: AIPlatform) -> None:
+        if platform.platform_id == "yuanbao":
+            input_locator = await _find_yuanbao_input(page, timeout=8000)
+            if input_locator is None:
+                raise RuntimeError(f"Blocked: Yuanbao input was not visible on the default page: {platform.selectors.input}")
+            return
+
         if platform.new_chat_url:
             await page.goto(platform.new_chat_url, wait_until="domcontentloaded")
             await asyncio.sleep(1)
@@ -237,6 +318,8 @@ class AIPlatformRunner:
                 raise RuntimeError("Blocked: no input or new conversation control was available.")
 
         input_locator = await _first_visible_locator(page, platform.selectors.input, 10000)
+        if input_locator is None and platform.platform_id == "yuanbao":
+            input_locator = await _find_yuanbao_input(page, timeout=6000)
         if input_locator is None:
             raise RuntimeError(f"Blocked: input was not visible after opening a new conversation: {platform.selectors.input}")
 
@@ -251,14 +334,22 @@ class AIPlatformRunner:
     async def _submit_question(self, page, platform: AIPlatform, question: str) -> None:
         selectors = platform.selectors
         input_locator = await _first_visible_locator(page, selectors.input, self.config.timeout_seconds * 1000)
+        if input_locator is None and platform.platform_id == "yuanbao":
+            input_locator = await _find_yuanbao_input(page, timeout=6000)
         if input_locator is None:
             raise RuntimeError(f"Input selector was not visible: {selectors.input}")
-        await input_locator.click()
         try:
-            await input_locator.fill(question)
+            await self._fill_question_input(page, input_locator, question)
         except Exception:
-            await page.keyboard.press("Meta+A")
-            await page.keyboard.type(question)
+            popup_closed, popup_error = await _close_blocking_popups(page)
+            if not popup_closed:
+                raise RuntimeError(f"Blocked: {popup_error or 'blocking popup could not be closed before submitting'}")
+            input_locator = await _first_visible_locator(page, selectors.input, 3000)
+            if input_locator is None and platform.platform_id == "yuanbao":
+                input_locator = await _find_yuanbao_input(page, timeout=3000)
+            if input_locator is None:
+                raise RuntimeError(f"Input selector was not visible after closing popup: {selectors.input}")
+            await self._fill_question_input(page, input_locator, question)
         await page.wait_for_timeout(700)
 
         if selectors.submit:
@@ -276,6 +367,14 @@ class AIPlatformRunner:
                 await input_locator.press("Enter")
         else:
             await input_locator.press("Enter")
+
+    async def _fill_question_input(self, page, input_locator, question: str) -> None:
+        await input_locator.click()
+        try:
+            await input_locator.fill(question)
+        except Exception:
+            await page.keyboard.press("Meta+A")
+            await page.keyboard.type(question)
 
     async def _wait_and_extract_answer(self, page, platform: AIPlatform) -> str:
         selectors = platform.selectors
@@ -329,8 +428,23 @@ class AIPlatformRunner:
         if platform.platform_id == "yuanbao":
             await _screenshot_yuanbao(page, screenshot_path)
             return
+        if platform.platform_id == "tongyi":
+            await _screenshot_tongyi(page, screenshot_path)
+            return
         await _expand_scrollable_page(page)
         await page.screenshot(path=str(screenshot_path), full_page=True)
+
+    async def _extract_citations(self, page, platform: AIPlatform) -> list[dict[str, str]]:
+        triggers = platform.citation_triggers or _default_citation_triggers(platform.platform_id)
+        if not triggers:
+            return []
+        citations, debug_lines = await _click_trigger_and_collect_citations(page, triggers, platform.platform_id)
+        _log_citation_debug(platform.platform_id, debug_lines)
+        normalized = _filter_platform_citations(_normalize_citations(citations), platform.platform_id, page.url)
+        if not normalized and platform.platform_id in {"deepseek", "doubao", "yuanbao", "tongyi", "wenxin"}:
+            tail = " | ".join(debug_lines[-8:])
+            raise RuntimeError(f"Citation trigger was configured but no citation links were collected. Debug: {tail}")
+        return normalized
 
     async def _pause_for_blocked_debug(self, page, status: str, error_message: str | None) -> None:
         if status not in {"blocked", "login_required"} or self.config.pause_on_blocked_seconds <= 0 or self.config.headless:
@@ -350,6 +464,7 @@ class AIPlatformRunner:
             await asyncio.sleep(1)
 
     async def _save_html(self, page, html_path: Path, record: AnswerRecord) -> None:
+        record.answer_url = record.answer_url or page.url
         html_path.write_text(await page.content(), encoding="utf-8")
         record.raw_html_path = _relative_run_path(html_path)
 
@@ -402,8 +517,8 @@ async def _first_attached_locator(page, selector: str, timeout: int):
 
 
 async def _try_open_new_conversation_from_page(page, platform: AIPlatform) -> bool:
-    if platform.platform_id == "yuanbao" and await _try_click_yuanbao_new_chat_icon(page, platform):
-        return True
+    if platform.platform_id == "yuanbao":
+        return await _find_yuanbao_input(page, timeout=2000) is not None
 
     selectors = [
         platform.selectors.new_chat,
@@ -443,41 +558,25 @@ async def _try_open_new_conversation_from_page(page, platform: AIPlatform) -> bo
     return await _first_visible_locator(page, platform.selectors.input, timeout=1000) is not None
 
 
-async def _try_click_yuanbao_new_chat_icon(page, platform: AIPlatform) -> bool:
-    try:
-        clicked = await page.evaluate(
-            """
-            () => {
-              const visible = (el) => {
-                const style = window.getComputedStyle(el);
-                const rect = el.getBoundingClientRect();
-                return style.display !== 'none' && style.visibility !== 'hidden' && rect.width >= 20 &&
-                  rect.height >= 20 && rect.left >= 45 && rect.left <= 180 && rect.top >= 70 && rect.top <= 190;
-              };
-              const elements = Array.from(document.querySelectorAll('button, a, [role="button"], [class*="btn"], [class*="icon"]'))
-                .filter((el) => visible(el) && el.querySelector('svg'));
-              const scored = elements
-                .map((el) => {
-                  const rect = el.getBoundingClientRect();
-                  const text = `${el.textContent || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`;
-                  const plusHint = /新建|新对话|new|create|\\+/.test(text.toLowerCase()) ? 100 : 0;
-                  const xScore = Math.max(0, 70 - Math.abs((rect.left + rect.width / 2) - 112));
-                  return {el, score: plusHint + xScore};
-                })
-                .sort((a, b) => b.score - a.score);
-              const target = scored[0]?.el;
-              if (!target) return false;
-              target.click();
-              return true;
-            }
-            """
-        )
-        if not clicked:
-            return False
-        await page.wait_for_timeout(1000)
-        return await _first_visible_locator(page, platform.selectors.input, timeout=2500) is not None
-    except Exception:
-        return False
+async def _find_yuanbao_input(page, timeout: int):
+    deadline = asyncio.get_running_loop().time() + timeout / 1000
+    selectors = (
+        "#search-bar [contenteditable='true'] || "
+        "[class*='input'] [contenteditable='true'] || "
+        "[class*='editor'] [contenteditable='true'] || "
+        "[data-placeholder] || "
+        "[contenteditable='true'] || textarea"
+    )
+    while asyncio.get_running_loop().time() < deadline:
+        locator = await _first_visible_locator(page, selectors, timeout=800)
+        if locator is not None:
+            return locator
+        try:
+            await page.goto("https://yuanbao.tencent.com/", wait_until="domcontentloaded")
+        except Exception:
+            pass
+        await page.wait_for_timeout(1200)
+    return None
 
 
 async def _close_blocking_popups(page) -> tuple[bool, str | None]:
@@ -525,10 +624,22 @@ async def _has_blocking_popup(page) -> bool:
             await page.evaluate(
                 """
                 () => {
-                  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-                  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-                  const centerX = viewportWidth / 2;
-                  const centerY = viewportHeight / 2;
+                  const markers = [
+                    'verify you are human',
+                    'checking if the site connection is secure',
+                    'please verify you are human',
+                    'cloudflare',
+                    '请验证您是真人',
+                    '正在检查您是否是真人',
+                    '验证码',
+                    '安全检查',
+                    '安全验证',
+                    'unusual traffic'
+                  ];
+                  const bodyText = (document.body?.innerText || '').toLowerCase();
+                  if (!markers.some((marker) => bodyText.includes(marker.toLowerCase()))) {
+                    return false;
+                  }
 
                   const isVisible = (el) => {
                     const style = window.getComputedStyle(el);
@@ -540,30 +651,31 @@ async def _has_blocking_popup(page) -> bool:
                       rect.left < viewportWidth && rect.top < viewportHeight;
                   };
 
-                  const coversCenter = (rect) =>
-                    rect.left <= centerX && rect.right >= centerX && rect.top <= centerY && rect.bottom >= centerY;
+                  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
 
-                  const likelyDialog = (el, style, rect) => {
+                  const verificationLayer = (el, style, rect) => {
                     const role = (el.getAttribute('role') || '').toLowerCase();
                     const ariaModal = (el.getAttribute('aria-modal') || '').toLowerCase();
                     const className = String(el.className || '').toLowerCase();
                     const id = String(el.id || '').toLowerCase();
+                    const text = (el.innerText || el.textContent || '').toLowerCase();
                     const name = `${className} ${id}`;
                     const zIndex = Number.parseInt(style.zIndex || '0', 10) || 0;
                     const fixedLayer = ['fixed', 'sticky'].includes(style.position) && zIndex >= 10;
-                    const namedLayer = /(^|[-_\\s])(modal|popup|mask|overlay|drawer)([-_\\s]|$)/.test(name);
+                    const namedLayer = /(^|[-_\\s])(modal|popup|mask|overlay|captcha|verify|verification|cloudflare)([-_\\s]|$)/.test(name);
                     const modalRole = role === 'dialog' || role === 'alertdialog' || ariaModal === 'true';
-                    const largeEnough = rect.width >= Math.min(360, viewportWidth * 0.35) &&
-                      rect.height >= Math.min(180, viewportHeight * 0.25);
-                    const coversEnough = rect.width * rect.height >= viewportWidth * viewportHeight * 0.18;
-                    return (modalRole || namedLayer || fixedLayer) && (largeEnough || coversEnough) && coversCenter(rect);
+                    const containsMarker = markers.some((marker) => text.includes(marker.toLowerCase()));
+                    const largeEnough = rect.width >= Math.min(320, viewportWidth * 0.3) &&
+                      rect.height >= Math.min(120, viewportHeight * 0.18);
+                    return containsMarker && (modalRole || namedLayer || fixedLayer || largeEnough);
                   };
 
                   return Array.from(document.querySelectorAll('body *')).some((el) => {
                     if (!isVisible(el)) return false;
                     const style = window.getComputedStyle(el);
                     const rect = el.getBoundingClientRect();
-                    return likelyDialog(el, style, rect);
+                    return verificationLayer(el, style, rect);
                   });
                 }
                 """
@@ -591,14 +703,10 @@ async def _has_blocked_page_shape(page) -> bool:
             "正在检查您是否是真人",
             "验证码",
             "安全检查",
-            "风控",
             "unusual traffic",
             "cloudflare",
         )
-        if any(marker.casefold() in normalized for marker in decisive_markers):
-            return True
-        input_locator = await _first_visible_locator(page, "textarea || [contenteditable='true'] || .ql-editor", 500)
-        return input_locator is None and len(normalized) < 1200
+        return any(marker.casefold() in normalized for marker in decisive_markers)
     except Exception:
         return False
 
@@ -711,44 +819,1086 @@ async def _expand_scrollable_page(page) -> None:
         pass
 
 
-async def _screenshot_yuanbao(page, screenshot_path: Path) -> None:
+async def _expand_platform_chat_scrollables(page, platform_id: str) -> None:
     try:
         await page.evaluate(
             """
-            () => {
-              const selectors = [
-                '.agent-chat__list',
-                '[class*="agent-chat__list"]',
-                '.agent-dialogue__content',
-                '[class*="agent-dialogue__content"]',
-                'main'
-              ];
-              const roots = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
-              const target = roots
-                .filter((el) => el.scrollHeight > el.clientHeight + 80)
-                .sort((a, b) => (b.scrollHeight * b.clientWidth) - (a.scrollHeight * a.clientWidth))[0];
-              if (!target) return;
-              target.scrollTop = target.scrollHeight;
+            ({platformId}) => {
+              const selectorMap = {
+                yuanbao: [
+                  '.agent-chat__list',
+                  '[class*="agent-chat__list"]',
+                  '.agent-dialogue__content',
+                  '[class*="agent-dialogue__content"]',
+                  '[class*="agent-chat"]',
+                  'main'
+                ],
+                tongyi: [
+                  '.markdown',
+                  '[class*="markdown"]',
+                  '[class*="response"]',
+                  '[class*="conversation"]',
+                  '[class*="chat"]',
+                  'main'
+                ]
+              };
+              const selectors = selectorMap[platformId] || ['main'];
+              const set = (el, prop, value) => {
+                try { el.style[prop] = value; } catch {}
+              };
+              const visible = (el) => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' &&
+                  rect.width > 200 && rect.height > 80;
+              };
+              set(document.documentElement, 'height', 'auto');
+              set(document.documentElement, 'maxHeight', 'none');
+              set(document.documentElement, 'overflow', 'visible');
+              set(document.body, 'height', 'auto');
+              set(document.body, 'maxHeight', 'none');
+              set(document.body, 'overflow', 'visible');
+
+              const roots = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+                .filter(visible);
+              const scrollables = Array.from(new Set([
+                ...roots,
+                ...Array.from(document.querySelectorAll('body *'))
+                  .filter((el) => visible(el) && el.scrollHeight > el.clientHeight + 80 && el.clientWidth > 260)
+              ]))
+                .sort((a, b) => (b.scrollHeight * b.clientWidth) - (a.scrollHeight * a.clientWidth))
+                .slice(0, 12);
+
+              for (const el of scrollables) {
+                const fullHeight = Math.min(Math.max(el.scrollHeight, el.clientHeight), 50000);
+                el.scrollTop = 0;
+                set(el, 'height', `${fullHeight}px`);
+                set(el, 'maxHeight', 'none');
+                set(el, 'overflow', 'visible');
+                set(el, 'position', 'relative');
+                let parent = el.parentElement;
+                let depth = 0;
+                while (parent && parent !== document.body && depth < 10) {
+                  set(parent, 'height', 'auto');
+                  set(parent, 'maxHeight', 'none');
+                  set(parent, 'overflow', 'visible');
+                  parent.scrollTop = 0;
+                  parent = parent.parentElement;
+                  depth += 1;
+                }
+              }
+              window.scrollTo(0, 0);
             }
-            """
+            """,
+            {"platformId": platform_id},
         )
-        await page.wait_for_timeout(300)
-        locator = await _first_visible_locator(
-            page,
-            ".agent-dialogue__content || [class*='agent-dialogue__content'] || main || body",
-            2000,
-        )
-        if locator is not None:
-            await locator.screenshot(path=str(screenshot_path))
-            return
+        await page.wait_for_timeout(700)
+    except Exception:
+        pass
+
+
+async def _screenshot_tongyi(page, screenshot_path: Path) -> None:
+    await _expand_platform_chat_scrollables(page, "tongyi")
+    await page.screenshot(path=str(screenshot_path), full_page=True)
+
+
+async def _screenshot_yuanbao(page, screenshot_path: Path) -> None:
+    try:
+        await _expand_platform_chat_scrollables(page, "yuanbao")
+        await page.screenshot(path=str(screenshot_path), full_page=True)
+        return
     except Exception:
         pass
     await page.screenshot(path=str(screenshot_path), full_page=True)
 
 
+def _default_citation_triggers(platform_id: str) -> tuple[str, ...]:
+    defaults = {
+        "chatgpt": ("source", "sources", "来源"),
+        "gemini": ("Sources", "引用", "参考", "链接"),
+        "deepseek": ("个网页", "来源", "source"),
+        "doubao": ("参考", "篇资料"),
+        "yuanbao": ("找到了", "篇相关资料", "相关资料"),
+        "tongyi": ("篇来源", "来源"),
+        "kimi": ("引用",),
+        "wenxin": ("参考", "个网页"),
+    }
+    return defaults.get(platform_id, ("Sources", "引用", "参考", "来源", "链接"))
+
+
+async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], platform_id: str) -> tuple[list[dict[str, str]], list[str]]:
+    pre_clicked, playwright_debug = await _playwright_click_citation_candidate(page, triggers, platform_id)
+    mouse_debug = [] if pre_clicked else await _mouse_click_citation_candidate(page, triggers, platform_id)
+    payload = await page.evaluate(
+        """
+        async ({triggers, platformId}) => {
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const debug = [];
+          const log = (message) => debug.push(String(message));
+          const normalizedTriggers = triggers.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean);
+          log(`start triggers=${normalizedTriggers.join('|') || '(none)'}`);
+          const visible = (el) => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 8 && rect.height > 8;
+          };
+          const textOf = (el) => [
+            el.innerText || el.textContent || '',
+            el.getAttribute('aria-label') || '',
+            el.getAttribute('title') || ''
+          ].join(' ').replace(/\\s+/g, ' ').trim();
+          const matches = (el) => {
+            const text = textOf(el).toLowerCase();
+            return normalizedTriggers.some((trigger) => text.includes(trigger));
+          };
+          const clickRoot = (el) => el.closest('button, a, [role="button"], [tabindex], [onclick], [class*="btn" i], [class*="button" i]') || el;
+          const clickableSelector = [
+            'button',
+            'a',
+            '[role="button"]',
+            '[tabindex]',
+            '[onclick]',
+            '[id="search-guide-tool"]',
+            '[class*="message-action-button-third"]',
+            '[class*="entry-btn"]',
+            '[class*="source" i]',
+            '[class*="citation" i]',
+            '[class*="reference" i]',
+            '[class*="ref" i]',
+            '[class*="web" i]'
+          ].join(',');
+          const answerScopes = findAnswerScopes();
+          const answerScope = answerScopes[answerScopes.length - 1] || document.body;
+          const before = currentExternalLinks(document);
+          const scopedCandidates = findCitationTriggers(answerScope);
+          const pageCandidates = findCitationTriggers(document.body);
+          log(`answerScopes=${answerScopes.length} beforeExternalLinks=${before.size}`);
+          log(`candidates scoped=${scopedCandidates.length} page=${pageCandidates.length}`);
+          const initialLayer = findCitationLayer();
+          if (initialLayer) {
+            log(`initialCitationLayer=${describeElement(initialLayer)}`);
+          } else {
+            const verified = await clickVerifiedTrigger([...scopedCandidates, ...pageCandidates], before);
+            log(`verified=${verified ? textOf(verified).slice(0, 80) : '(none)'}`);
+          }
+          const citationLayer = findCitationLayer();
+          log(`citationLayer=${citationLayer ? describeElement(citationLayer) : '(none)'}`);
+          const linkRoot = citationLayer || (platformId === 'tongyi' ? document : answerScope);
+          if (!linkRoot) {
+            log('linkRoot=(none)');
+            return {items: [], debug};
+          }
+          const linkElements = Array.from(linkRoot.querySelectorAll('a[href]'))
+            .filter((a) => isExternalHref(a.href) && (visible(a) || visibleCitationCard(a)));
+          log(`externalLinksInRoot=${linkElements.length}`);
+          const preferred = linkElements.filter((a) => citationLayer || !before.has(a.href) || hasCitationAncestor(a));
+          const source = preferred.length ? preferred : linkElements.filter(hasCitationAncestor);
+          log(`preferredLinks=${preferred.length} sourceLinks=${source.length}`);
+          if (source[0]) log(`firstSource=${source[0].href}`);
+          const anchorItems = source.slice(0, 80).map((a) => {
+            const text = textOf(a);
+            const parentText = textOf(a.closest('[role="dialog"], [class*="modal" i], [class*="popup" i], [class*="drawer" i], li, article, section, div') || a);
+            const site = inferSiteName(a, parentText);
+            return {title: text || parentText || a.href, site_name: site, url: a.href};
+          });
+          const cardItems = platformId === 'tongyi' ? extractCitationCards(linkRoot) : (platformId === 'doubao' ? extractDoubaoCitationCards(linkRoot) : (platformId === 'yuanbao' ? extractYuanbaoCitationCards(linkRoot) : []));
+          log(`cardItems=${cardItems.length}`);
+          if (cardItems[0]) log(`firstCard=${cardItems[0].url}`);
+          const items = dedupeItems([...anchorItems, ...cardItems]);
+          return {items, debug};
+
+          function findAnswerScopes() {
+            const selectors = [
+              '[data-message-author-role="assistant"]',
+              '.agent-chat__conv--ai',
+              '[class*="conv--ai"]',
+              '#answer_text_id',
+              '.ds-markdown',
+              '.markdown',
+              '[class*="markdown"]',
+              'message-content',
+              '.model-response-text',
+              '[data-response-index]',
+              '.md-stream',
+              '[class*="answer"]',
+              '[class*="response"]',
+              '[class*="message-content"]'
+            ];
+            const seen = new Set();
+            return selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+              .filter((el) => {
+                if (seen.has(el) || !visible(el)) return false;
+                seen.add(el);
+                return textOf(el).length >= 20;
+              })
+              .sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                return (ar.top - br.top) || (ar.left - br.left);
+              });
+          }
+
+          async function clickVerifiedTrigger(items, beforeLinks) {
+            const unique = [];
+            const seen = new Set();
+            for (const item of items) {
+              if (!item?.el || seen.has(item.el)) continue;
+              if (item.text && item.text.length > 20 && !item.force) continue;
+              seen.add(item.el);
+              unique.push(item);
+            }
+            for (const item of unique.slice(0, 10)) {
+              try {
+                log(`tryCandidate text=${String(item.text || '').slice(0, 80)} score=${Math.round(item.score || 0)}`);
+                item.el.scrollIntoView({block: 'center', inline: 'nearest'});
+                await sleep(200);
+                await humanClick(item.el);
+                await sleep(1200);
+                if (!findCitationLayer()) {
+                  await keyboardActivate(item.el);
+                }
+                await sleep(10000);
+                const layer = findCitationLayer();
+                const root = layer || (platformId === 'doubao' ? null : document);
+                if (!root) {
+                  log('afterClick root=(none)');
+                  continue;
+                }
+                const afterLinks = currentExternalLinks(root);
+                const newLinks = [...afterLinks].filter((href) => !beforeLinks.has(href));
+                log(`afterClick layer=${layer ? describeElement(layer) : '(none)'} externalLinks=${afterLinks.size} newExternalLinks=${newLinks.length}`);
+                if (newLinks[0]) log(`newExternalLink=${newLinks[0]}`);
+                if (layer || newLinks.length) return item.el;
+              } catch (error) {
+                log(`candidateError=${error?.message || error}`);
+              }
+            }
+            return null;
+          }
+
+          async function humanClick(el) {
+            const rect = el.getBoundingClientRect();
+            const x = Math.max(1, Math.min(window.innerWidth - 2, rect.left + rect.width / 2));
+            const y = Math.max(1, Math.min(window.innerHeight - 2, rect.top + rect.height / 2));
+            const target = document.elementFromPoint(x, y) || el;
+            log(`clickPoint=${Math.round(x)},${Math.round(y)} target=${describeElement(target)}`);
+            for (const type of ['pointerover', 'mouseover', 'pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+              const eventInit = {bubbles: true, cancelable: true, clientX: x, clientY: y, view: window};
+              const event = type.startsWith('pointer')
+                ? new PointerEvent(type, {...eventInit, pointerId: 1, pointerType: 'mouse', isPrimary: true})
+                : new MouseEvent(type, eventInit);
+              target.dispatchEvent(event);
+            }
+          }
+
+          async function keyboardActivate(el) {
+            try {
+              el.focus({preventScroll: true});
+              log('keyboardActivate=Enter/Space');
+              for (const key of ['Enter', ' ']) {
+                el.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true}));
+                el.dispatchEvent(new KeyboardEvent('keyup', {key, bubbles: true, cancelable: true}));
+                await sleep(300);
+                if (findCitationLayer()) return;
+              }
+            } catch (error) {
+              log(`keyboardActivateError=${error?.message || error}`);
+            }
+          }
+
+          function findCitationTriggers(root) {
+            const scoped = Array.from(root.querySelectorAll(clickableSelector)).filter(visible);
+            const tinyTextMatches = findTinyTextMatches(root);
+            const platformSpecific = [...tinyTextMatches, ...scoped.map((el) => ({el: clickRoot(el), text: textOf(el)}))]
+              .filter((item) => platformTriggerMatch(item.el, item.text));
+            const generic = scoped
+              .map((el) => ({el: clickRoot(el), text: textOf(el)}))
+              .filter((item) => matches(item.el) || normalizedTriggers.some((trigger) => item.text.toLowerCase().includes(trigger)));
+            return sortTriggers([...platformSpecific, ...generic]);
+          }
+
+          function findTinyTextMatches(root) {
+            return Array.from(root.querySelectorAll('button, a, span, div, p, li, [role="button"], [tabindex], [onclick]'))
+              .filter(visible)
+              .map((el) => ({el: clickRoot(el), text: textOf(el), raw: el}))
+              .filter((item) => {
+                const text = item.text || '';
+                if (!text || text.length > 80) return false;
+                return platformTriggerMatch(item.el, text) || normalizedTriggers.some((trigger) => text.toLowerCase().includes(trigger));
+              })
+              .map((item) => ({...item, force: true}));
+          }
+
+          function platformTriggerMatch(el, text) {
+            const normalized = text.toLowerCase();
+            if (platformId === 'yuanbao' && (el.id === 'search-guide-tool' || el.querySelector?.('#search-guide-tool'))) return true;
+            if (platformId === 'deepseek' && /\\d+\\s*个\\s*网页/.test(text)) return true;
+            if (platformId === 'doubao' && /参考\\s*\\d+\\s*篇\\s*资料/.test(text)) return true;
+            if (platformId === 'tongyi' && /\\d+\\s*篇\\s*来源/.test(text)) return true;
+            if (platformId === 'wenxin' && /参考\\s*\\d+\\s*个\\s*网页/.test(text)) return true;
+            return normalizedTriggers.some((trigger) => normalized.includes(trigger));
+          }
+
+          function sortTriggers(items) {
+            return items
+              .map((item) => {
+                const rect = item.el.getBoundingClientRect();
+                const digitScore = /\\d/.test(item.text) ? 100 : 0;
+                const lastAnswerScore = answerScope.contains(item.el) ? 200 : 0;
+                const shortTextScore = Math.max(0, 120 - String(item.text || '').length);
+                const smallAreaScore = Math.max(0, 180 - Math.min((rect.width * rect.height) / 1000, 180));
+                const doubaoScore = platformId === 'doubao' && /参考\\s*\\d+\\s*篇\\s*资料/.test(item.text) ? 700 : 0;
+                const forceScore = item.force ? 300 : 0;
+                return {...item, score: doubaoScore + forceScore + lastAnswerScore + digitScore + shortTextScore + smallAreaScore + rect.top / Math.max(1, window.innerHeight)};
+              })
+              .sort((a, b) => b.score - a.score);
+          }
+
+          function findCitationLayer() {
+            if (platformId === 'yuanbao') {
+              const yuanbaoLayer = document.querySelector('#chatReferenceList');
+              if (yuanbaoLayer && visible(yuanbaoLayer)) return yuanbaoLayer;
+            }
+            if (platformId === 'tongyi') {
+              const tongyiLayer = findRightCitationLayer(/参考来源|来源/, false);
+              if (tongyiLayer) return tongyiLayer;
+            }
+            if (platformId === 'deepseek') {
+              const deepseekLayer = findRightCitationLayer(/搜索结果|网页|来源|参考/);
+              if (deepseekLayer) return deepseekLayer;
+            }
+            if (platformId === 'doubao') {
+              const doubaoLayer = findDoubaoCitationLayer();
+              if (doubaoLayer) return doubaoLayer;
+            }
+            const selectors = [
+              '[role="dialog"]',
+              '[class*="modal" i]',
+              '[class*="popup" i]',
+              '[class*="drawer" i]',
+              '[class*="source" i]',
+              '[class*="citation" i]',
+              '[class*="reference" i]',
+              '[class*="ref" i]',
+              '[class*="web" i]'
+            ];
+            const layers = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+              .filter((el) => visible(el) && el.querySelector('a[href]') && (matches(el) || textOf(el).length > 20))
+              .sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                return (br.width * br.height) - (ar.width * ar.height);
+              });
+            return layers[0] || null;
+          }
+
+          function findRightCitationLayer(titlePattern, requireLinks = true) {
+            const candidates = Array.from(document.querySelectorAll('aside, section, article, div'))
+              .filter((el) => {
+                if (!visible(el)) return false;
+                if (requireLinks && !el.querySelector('a[href]')) return false;
+                const rect = el.getBoundingClientRect();
+                const text = textOf(el);
+                return rect.left >= window.innerWidth * 0.55 && rect.width >= 260 && rect.height >= 300 &&
+                  text.length > 20 && titlePattern.test(text);
+              })
+              .map((el) => {
+                const rect = el.getBoundingClientRect();
+                const text = textOf(el);
+                const titleScore = titlePattern.test(text.slice(0, 120)) ? 500 : 0;
+                const rightScore = rect.left + rect.width;
+                const areaScore = Math.min(rect.width * rect.height / 1000, 500);
+                return {el, score: titleScore + rightScore + areaScore};
+              })
+              .sort((a, b) => b.score - a.score);
+            return candidates[0]?.el || null;
+          }
+
+          function findDoubaoCitationLayer() {
+            const candidates = Array.from(document.querySelectorAll('aside, section, article, div'))
+              .filter((el) => {
+                if (!visible(el)) return false;
+                const rect = el.getBoundingClientRect();
+                const text = textOf(el);
+                return rect.left >= window.innerWidth * 0.55 && rect.width >= 260 && rect.height >= 300 &&
+                  text.length > 20 && !/历史对话|新对话|AI 创作|云盘|更多/.test(text);
+              })
+              .map((el) => {
+                const rect = el.getBoundingClientRect();
+                const text = textOf(el);
+                const titleScore = /参考资料|参考|资料/.test(text) ? 500 : 0;
+                const rightScore = rect.left + rect.width;
+                const areaScore = Math.min(rect.width * rect.height / 1000, 500);
+                return {el, score: titleScore + rightScore + areaScore};
+              })
+              .sort((a, b) => b.score - a.score);
+            return candidates[0]?.el || null;
+          }
+
+          function hasCitationAncestor(el) {
+            const ancestor = el.closest('[role="dialog"], [class*="modal" i], [class*="popup" i], [class*="drawer" i], [class*="source" i], [class*="citation" i], [class*="reference" i], [class*="ref" i], [class*="web" i]');
+            if (ancestor) return true;
+            const text = textOf(el.closest('section, article, li, div') || el).toLowerCase();
+            return normalizedTriggers.some((trigger) => text.includes(trigger));
+          }
+
+          function visibleCitationCard(el) {
+            const card = el.closest('a, li, article, section, div');
+            return Boolean(card && visible(card));
+          }
+
+          function extractCitationCards(root) {
+            const cards = Array.from(root.querySelectorAll('a[href], li, article, section, div, [role="link"], [data-url], [data-href], [data-c="refer_panel"], [data-click-extra*="ref_url"]'))
+              .filter((el) => visible(el))
+              .map((el) => {
+                const text = textOf(el);
+                const url = platformId === 'tongyi' ? findTongyiRefUrl(el) : findUrlInElement(el, text);
+                return {el, text, url};
+              })
+              .filter((item) => item.url && isExternalHref(item.url) && item.text.length >= 8)
+              .map((item) => {
+                const lines = item.text.split(/\\s{2,}|\\n/).map((line) => line.trim()).filter(Boolean);
+                const site = inferSiteNameFromText(item.url, item.text);
+                const title = lines.find((line) => line.length >= 6 && !line.includes(site) && !/^\\d+$/.test(line)) || item.text || item.url;
+                return {title, site_name: site, url: item.url};
+              });
+            return dedupeItems(cards).slice(0, 80);
+          }
+
+          function extractDoubaoCitationCards(root) {
+            const cards = Array.from(root.querySelectorAll('div.w-full a[href], .w-full a[href]'))
+              .filter((a) => isExternalHref(a.href) && visibleCitationCard(a))
+              .map((a) => {
+                const card = a.closest('div.w-full') || a;
+                const text = textOf(card);
+                const site = inferSiteName(a, text);
+                const lines = text.split(/\\s{2,}|\\n/).map((line) => line.trim()).filter(Boolean);
+                const title = lines.find((line) => line.length >= 6 && !line.includes(site) && !/^\\d+$/.test(line)) || textOf(a) || text || a.href;
+                return {title, site_name: site, url: a.href};
+              });
+            return dedupeItems(cards).slice(0, 80);
+          }
+
+          function extractYuanbaoCitationCards(root) {
+            const cards = Array.from(root.querySelectorAll('#chatReferenceList li, li[dt-ext6], li[class*="agent-dialogue-references"]'))
+              .filter((li) => visible(li))
+              .map((li) => {
+                const text = textOf(li);
+                const rawUrl = li.getAttribute('dt-ext6') || '';
+                const url = extractUrl(rawUrl);
+                return {text, url};
+              })
+              .filter((item) => item.url && isExternalHref(item.url) && item.text.length >= 8)
+              .map((item) => {
+                const site = inferSiteNameFromText(item.url, item.text);
+                const lines = item.text.split(/\\s{2,}|\\n/).map((line) => line.trim()).filter(Boolean);
+                const title = lines.find((line) => line.length >= 6 && !line.includes(site) && !/^\\d+$/.test(line)) || item.text || item.url;
+                return {title, site_name: site, url: item.url};
+              });
+            return dedupeItems(cards).slice(0, 80);
+          }
+
+          function findUrlInElement(el, text) {
+            const anchor = el.matches?.('a[href]') ? el : el.querySelector?.('a[href]');
+            if (anchor?.href) return anchor.href;
+            const attrNames = ['href', 'data-url', 'data-href', 'data-link', 'data-jump-url', 'data-target', 'data-value', 'to'];
+            const stack = [el, ...Array.from(el.querySelectorAll?.('*') || [])].slice(0, 80);
+            for (const node of stack) {
+              const structuredUrl = extractStructuredUrl(node);
+              if (structuredUrl) return structuredUrl;
+              for (const attr of attrNames) {
+                const value = node.getAttribute?.(attr);
+                const url = extractUrl(value || '');
+                if (url) return url;
+              }
+              for (const attr of Array.from(node.attributes || [])) {
+                const url = extractUrl(attr.value || '');
+                if (url) return url;
+              }
+            }
+            return extractUrl(text || '');
+          }
+
+          function findTongyiRefUrl(el) {
+            const stack = [el, ...Array.from(el.querySelectorAll?.('[data-click-extra], [data-exposure-extra]') || [])].slice(0, 60);
+            for (const node of stack) {
+              for (const attr of ['data-click-extra', 'data-exposure-extra']) {
+                const value = node.getAttribute?.(attr);
+                if (!value) continue;
+                const parsed = parseJsonish(value);
+                const refUrl = findKeyInObject(parsed, 'ref_url');
+                if (refUrl) return extractUrl(refUrl);
+              }
+            }
+            return '';
+          }
+
+          function extractStructuredUrl(node) {
+            const attrNames = ['data-click-extra', 'data-exposure-extra', 'data-extra', 'data-log', 'data-spm'];
+            for (const attr of attrNames) {
+              const value = node.getAttribute?.(attr);
+              if (!value) continue;
+              const parsed = parseJsonish(value);
+              const fromObject = findUrlInObject(parsed);
+              if (fromObject) return fromObject;
+              const fromText = extractUrl(value);
+              if (fromText) return fromText;
+            }
+            return '';
+          }
+
+          function parseJsonish(value) {
+            const candidates = [
+              value,
+              safeDecode(value),
+              value.replace(/\\\\\\//g, '/'),
+              safeDecode(value).replace(/\\\\\\//g, '/')
+            ];
+            for (const candidate of candidates) {
+              try {
+                return JSON.parse(candidate);
+              } catch {
+                continue;
+              }
+            }
+            return null;
+          }
+
+          function findUrlInObject(value) {
+            if (!value) return '';
+            if (typeof value === 'string') return extractUrl(value);
+            if (Array.isArray(value)) {
+              for (const item of value) {
+                const url = findUrlInObject(item);
+                if (url) return url;
+              }
+              return '';
+            }
+            if (typeof value === 'object') {
+              for (const key of ['ref_url', 'url', 'href', 'link', 'target_url', 'jump_url']) {
+                const url = findUrlInObject(value[key]);
+                if (url) return url;
+              }
+              for (const item of Object.values(value)) {
+                const url = findUrlInObject(item);
+                if (url) return url;
+              }
+            }
+            return '';
+          }
+
+          function findKeyInObject(value, keyName) {
+            if (!value) return '';
+            if (Array.isArray(value)) {
+              for (const item of value) {
+                const found = findKeyInObject(item, keyName);
+                if (found) return found;
+              }
+              return '';
+            }
+            if (typeof value === 'object') {
+              if (typeof value[keyName] === 'string') return value[keyName];
+              for (const item of Object.values(value)) {
+                const found = findKeyInObject(item, keyName);
+                if (found) return found;
+              }
+            }
+            return '';
+          }
+
+          function extractUrl(value) {
+            const raw = String(value || '');
+            const decoded = safeDecode(raw).replace(/\\\\\\//g, '/');
+            const unescaped = raw.replace(/\\\\\\//g, '/');
+            const match = decoded.match(/https?:\\/\\/[^\\s"'<>，。)）]+/i) || raw.match(/https?:\\/\\/[^\\s"'<>，。)）]+/i);
+            const fallback = unescaped.match(/https?:\\/\\/[^\\s"'<>，。)）]+/i);
+            return (match || fallback)?.[0] || '';
+          }
+
+          function safeDecode(value) {
+            try {
+              return decodeURIComponent(value);
+            } catch {
+              return value;
+            }
+          }
+
+          function dedupeItems(items) {
+            const seen = new Set();
+            const output = [];
+            for (const item of items) {
+              if (!item?.url || seen.has(item.url)) continue;
+              seen.add(item.url);
+              output.push(item);
+            }
+            return output;
+          }
+
+          function currentExternalLinks(root) {
+            return new Set(
+              Array.from(root.querySelectorAll('a[href]'))
+                .filter((a) => visible(a))
+                .map((a) => a.href)
+                .filter((href) => isExternalHref(href))
+            );
+          }
+
+          function isExternalHref(href) {
+            if (!/^https?:/i.test(href || '')) return false;
+            try {
+              const hostname = new URL(href).hostname.toLowerCase().replace(/^www\\./, '');
+              return !internalDomains().some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+            } catch {
+              return false;
+            }
+          }
+
+          function internalDomains() {
+            const current = location.hostname.toLowerCase().replace(/^www\\./, '');
+            const domainsByPlatform = {
+              chatgpt: ['chatgpt.com'],
+              gemini: ['gemini.google.com'],
+              deepseek: ['deepseek.com', 'chat.deepseek.com'],
+              doubao: ['doubao.com'],
+              yuanbao: ['yuanbao.tencent.com'],
+              tongyi: ['tongyi.aliyun.com'],
+              kimi: ['kimi.com'],
+              wenxin: ['yiyan.baidu.com']
+            };
+            return Array.from(new Set([current, ...(domainsByPlatform[platformId] || [])].filter(Boolean)));
+          }
+
+          function describeElement(el) {
+            if (!el) return '';
+            const rect = el.getBoundingClientRect();
+            const id = el.id ? `#${el.id}` : '';
+            const className = String(el.className || '').split(/\\s+/).filter(Boolean).slice(0, 3).join('.');
+            const name = `${el.tagName.toLowerCase()}${id}${className ? `.${className}` : ''}`;
+            return `${name} ${Math.round(rect.width)}x${Math.round(rect.height)} @${Math.round(rect.left)},${Math.round(rect.top)}`;
+          }
+
+          function inferSiteName(anchor, text) {
+            const explicit = anchor.getAttribute('data-site') || anchor.getAttribute('data-domain') || anchor.getAttribute('aria-label') || '';
+            const merged = `${explicit} ${text || ''}`;
+            const domainMatch = merged.match(/([a-z0-9-]+\\.)+[a-z]{2,}/i);
+            if (domainMatch) return domainMatch[0].replace(/^www\\./i, '');
+            try {
+              return new URL(anchor.href).hostname.replace(/^www\\./i, '');
+            } catch {
+              return '';
+            }
+          }
+
+          function inferSiteNameFromText(url, text) {
+            const domainMatch = String(text || '').match(/([a-z0-9-]+\\.)+[a-z]{2,}/i);
+            if (domainMatch) return domainMatch[0].replace(/^www\\./i, '');
+            try {
+              return new URL(url).hostname.replace(/^www\\./i, '');
+            } catch {
+              return '';
+            }
+          }
+        }
+        """,
+        {"triggers": list(triggers), "platformId": platform_id},
+    )
+    if isinstance(payload, dict):
+        items = payload.get("items")
+        debug = payload.get("debug")
+        item_list = items if isinstance(items, list) else []
+        debug_lines = [*playwright_debug, *mouse_debug, *([str(item) for item in debug] if isinstance(debug, list) else [])]
+        if platform_id == "wenxin":
+            clicked_items, clicked_debug = await _collect_wenxin_citations_by_clicking_cards(page)
+            item_list = [*item_list, *clicked_items]
+            debug_lines.extend(clicked_debug)
+        return item_list, debug_lines
+    return [], [*playwright_debug, *mouse_debug, f"unexpected payload type: {type(payload).__name__}"]
+
+
+async def _collect_wenxin_citations_by_clicking_cards(page) -> tuple[list[dict[str, str]], list[str]]:
+    debug: list[str] = []
+    try:
+        candidates = await page.evaluate(
+            """
+            () => {
+              const visible = (el) => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 &&
+                  rect.width >= 180 && rect.height >= 60 && rect.left >= window.innerWidth * 0.45;
+              };
+              const textOf = (el) => (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+              const roots = Array.from(document.querySelectorAll('[class*="SourcesViewer"], [class*="webListContainer"]'))
+                .filter((el) => {
+                  const rect = el.getBoundingClientRect();
+                  return rect.left >= window.innerWidth * 0.45 && rect.width >= 240;
+                });
+              const root = roots.sort((a, b) => b.getBoundingClientRect().width * b.getBoundingClientRect().height - a.getBoundingClientRect().width * a.getBoundingClientRect().height)[0] || document.body;
+              const cards = Array.from(root.querySelectorAll('[class^="item__"], [class*=" item__"], [class*="item__"]'))
+                .filter(visible)
+                .map((el) => {
+                  const rect = el.getBoundingClientRect();
+                  const text = textOf(el);
+                  return {el, text, area: rect.width * rect.height, top: rect.top};
+                })
+                .filter((item) => item.text.length >= 20 && /\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|搜狗|百度|搜狐|网易|新浪|腾讯|凤凰|今日头条|百家号|知乎|什么值得买|太平洋|中关村/.test(item.text))
+                .sort((a, b) => a.top - b.top || b.area - a.area);
+              const selected = [];
+              for (const item of cards) {
+                if (selected.some((other) => other.el.contains(item.el) || item.el.contains(other.el))) continue;
+                selected.push(item);
+                if (selected.length >= 12) break;
+              }
+              selected.forEach((item, index) => item.el.setAttribute('data-geomonitor-wenxin-source-index', String(index)));
+              return selected.map((item, index) => {
+                const rect = item.el.getBoundingClientRect();
+                return {index, text: item.text, width: Math.round(rect.width), height: Math.round(rect.height), top: Math.round(rect.top)};
+              });
+            }
+            """
+        )
+    except Exception as exc:  # noqa: BLE001
+        return [], [f"wenxinClickCardsDiscoveryError={exc}"]
+
+    if not isinstance(candidates, list) or not candidates:
+        return [], ["wenxinClickCards=(none)"]
+
+    debug.append(f"wenxinClickCards candidates={len(candidates)}")
+    items: list[dict[str, str]] = []
+    original_url = page.url
+    for candidate in candidates[:8]:
+        if not isinstance(candidate, dict):
+            continue
+        index = candidate.get("index")
+        text = str(candidate.get("text") or "")
+        locator = page.locator(f'[data-geomonitor-wenxin-source-index="{index}"]').first
+        title, site_name = _parse_wenxin_card_text(text)
+        try:
+            await locator.scroll_into_view_if_needed(timeout=1500)
+            box = await locator.bounding_box(timeout=1500)
+            if not box:
+                debug.append(f"wenxinCardNoBox index={index}")
+                continue
+            debug.append(
+                f"wenxinCardTry index={index} text={text[:60]} box={round(box['width'])}x{round(box['height'])}"
+            )
+            url = await _click_wenxin_card_for_url(page, box, original_url, index, debug)
+
+            if _is_external_citation_url(url, "wenxin"):
+                items.append({"title": title or url, "site_name": site_name or _site_name_from_url(url), "url": url})
+                debug.append(f"wenxinCardUrl index={index} url={url}")
+            else:
+                debug.append(f"wenxinCardNoUrl index={index} current={page.url}")
+        except Exception as exc:  # noqa: BLE001
+            debug.append(f"wenxinCardError index={index}: {exc}")
+    return _dedupe_citation_items(items), debug
+
+
+async def _click_wenxin_card_for_url(page, box: dict, original_url: str, index, debug: list[str]) -> str:
+    points = [
+        (0.50, 0.50),
+        (0.50, 0.20),
+        (0.35, 0.25),
+        (0.72, 0.25),
+        (0.50, 0.78),
+    ]
+    for point_index, (x_ratio, y_ratio) in enumerate(points):
+        x = box["x"] + box["width"] * x_ratio
+        y = box["y"] + box["height"] * y_ratio
+        debug.append(f"wenxinCardClick index={index} point={point_index}:{round(x)},{round(y)}")
+        url = await _click_and_capture_external_url(page, x, y, original_url, debug)
+        if _is_external_citation_url(url, "wenxin"):
+            return url
+        await page.wait_for_timeout(350)
+    return ""
+
+
+async def _click_and_capture_external_url(page, x: float, y: float, original_url: str, debug: list[str]) -> str:
+    try:
+        async with page.context.expect_page(timeout=2500) as popup_info:
+            await page.mouse.click(x, y)
+        popup = await popup_info.value
+        try:
+            url = await _wait_for_external_popup_url(popup, "wenxin")
+        finally:
+            try:
+                await popup.close()
+            except Exception:
+                pass
+        if url:
+            return url
+        debug.append("wenxinPopupNoExternalUrl")
+        return ""
+    except Exception:
+        await page.mouse.click(x, y)
+        await page.wait_for_timeout(1000)
+        if _is_external_citation_url(page.url, "wenxin"):
+            url = page.url
+            try:
+                await page.goto(original_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+            return url
+        if page.url != original_url:
+            debug.append(f"wenxinSamePageNonExternalUrl={page.url}")
+            try:
+                await page.goto(original_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+        return ""
+
+
+async def _wait_for_external_popup_url(popup, platform_id: str) -> str:
+    try:
+        await popup.wait_for_load_state("domcontentloaded", timeout=5000)
+    except Exception:
+        pass
+    deadline = asyncio.get_running_loop().time() + 6
+    last_url = ""
+    while asyncio.get_running_loop().time() < deadline:
+        last_url = popup.url
+        if _is_external_citation_url(last_url, platform_id):
+            return last_url
+        await asyncio.sleep(0.3)
+    return last_url if _is_external_citation_url(last_url, platform_id) else ""
+
+
+def _parse_wenxin_card_text(text: str) -> tuple[str, str]:
+    normalized = " ".join(text.split()).strip()
+    lines = [line.strip() for line in text.replace(" - ", "\n").splitlines() if line.strip()]
+    if not lines:
+        parts = normalized.split(" ")
+        lines = [part for part in parts if part]
+    title = lines[0] if lines else normalized
+    site_name = ""
+    for line in lines[1:5]:
+        if re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", line):
+            continue
+        if 1 < len(line) <= 20 and not line.startswith(("http://", "https://")):
+            site_name = line
+            break
+    return title[:500], site_name[:180]
+
+
+def _is_external_citation_url(url: str, platform_id: str) -> bool:
+    if not url.startswith(("http://", "https://")):
+        return False
+    try:
+        hostname = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    except Exception:
+        return False
+    internal = {
+        "chatgpt": {"chatgpt.com"},
+        "gemini": {"gemini.google.com"},
+        "deepseek": {"deepseek.com", "chat.deepseek.com"},
+        "doubao": {"doubao.com"},
+        "yuanbao": {"yuanbao.tencent.com"},
+        "tongyi": {"tongyi.aliyun.com", "qianwen.com"},
+        "kimi": {"kimi.com"},
+        "wenxin": {"yiyan.baidu.com"},
+    }.get(platform_id, set())
+    return not any(hostname == domain or hostname.endswith(f".{domain}") for domain in internal)
+
+
+def _dedupe_citation_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    output: list[dict[str, str]] = []
+    for item in items:
+        url = str(item.get("url") or "")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        output.append(item)
+    return output
+
+
+async def _playwright_click_citation_candidate(page, triggers: tuple[str, ...], platform_id: str) -> tuple[bool, list[str]]:
+    if platform_id not in {"tongyi", "doubao"}:
+        return False, []
+    if platform_id == "doubao":
+        patterns = [r"参考\s*\d+\s*篇\s*资料", r"\d+\s*篇\s*资料", *[re.escape(trigger) for trigger in triggers if trigger.strip()]]
+    else:
+        patterns = [r"\d+\s*篇\s*来源", *[re.escape(trigger) for trigger in triggers if trigger.strip()]]
+    errors: list[str] = []
+    for pattern in patterns:
+        try:
+            count = await page.get_by_text(re.compile(pattern)).count()
+            if count <= 0:
+                errors.append(f"playwrightTextNoMatch={pattern}")
+                continue
+            clicked = False
+            for index in range(count - 1, max(count - 13, -1), -1):
+                candidate = page.get_by_text(re.compile(pattern)).nth(index)
+                try:
+                    if not await candidate.is_visible(timeout=500):
+                        continue
+                    await candidate.scroll_into_view_if_needed(timeout=1500)
+                    await page.wait_for_timeout(200)
+                    box = await candidate.bounding_box()
+                    text = (await candidate.inner_text(timeout=1000)).replace("\n", " ").strip()
+                    if not box:
+                        await candidate.click(timeout=1500, force=True)
+                        clicked = True
+                        errors.append(f"playwrightClick text={text[:80]} pattern={pattern} mode=locator")
+                    else:
+                        x = box["x"] + box["width"] / 2
+                        y = box["y"] + box["height"] / 2
+                        await page.mouse.move(x, y)
+                        await page.wait_for_timeout(150)
+                        await page.mouse.click(x, y)
+                        clicked = True
+                        errors.append(
+                            f"playwrightClick text={text[:80]} pattern={pattern} point={round(x)},{round(y)} "
+                            f"box={round(box['width'])}x{round(box['height'])}"
+                        )
+                    await page.wait_for_timeout(10000)
+                    return True, errors
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"playwrightClickCandidateError={pattern}:{exc}")
+                    continue
+            if not clicked:
+                errors.append(f"playwrightTextInvisible={pattern}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"playwrightClickError={pattern}:{exc}")
+    return False, errors[:12]
+
+
+async def _mouse_click_citation_candidate(page, triggers: tuple[str, ...], platform_id: str) -> list[str]:
+    try:
+        candidate = await page.evaluate(
+            """
+            ({triggers, platformId}) => {
+              const normalizedTriggers = triggers.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean);
+              const visible = (el) => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 &&
+                  rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.right > 0 &&
+                  rect.top < window.innerHeight && rect.left < window.innerWidth;
+              };
+              const textOf = (el) => [
+                el.innerText || el.textContent || '',
+                el.getAttribute('aria-label') || '',
+                el.getAttribute('title') || ''
+              ].join(' ').replace(/\\s+/g, ' ').trim();
+              const platformMatch = (el, text) => {
+                const normalized = text.toLowerCase();
+                if (platformId === 'yuanbao' && (el.id === 'search-guide-tool' || el.querySelector?.('#search-guide-tool'))) return true;
+                if (platformId === 'deepseek' && /\\d+\\s*个\\s*网页/.test(text)) return true;
+                if (platformId === 'doubao' && /参考\\s*\\d+\\s*篇\\s*资料/.test(text)) return true;
+                if (platformId === 'tongyi' && /\\d+\\s*篇\\s*来源/.test(text)) return true;
+                if (platformId === 'wenxin' && /参考\\s*\\d+\\s*个\\s*网页/.test(text)) return true;
+                return normalizedTriggers.some((trigger) => normalized.includes(trigger));
+              };
+              const elements = Array.from(document.querySelectorAll('button, a, span, div, p, li, td, tr, [role="button"], [tabindex], [onclick], [id="search-guide-tool"], [class*="message-action-button-third"], [class*="entry-btn"]'));
+              const candidates = elements
+                .filter(visible)
+                .map((el) => ({el, text: textOf(el)}))
+                .filter((item) => item.text && item.text.length <= 80 && platformMatch(item.el, item.text))
+                .map((item) => {
+                  item.el.scrollIntoView({block: 'center', inline: 'nearest'});
+                  const rect = item.el.getBoundingClientRect();
+                  const area = rect.width * rect.height;
+                  const digitScore = /\\d/.test(item.text) ? 100 : 0;
+                  const shortTextScore = Math.max(0, 120 - item.text.length);
+                  const smallAreaScore = Math.max(0, 800 - Math.min(area / 10, 800));
+                  const exactDeepseekScore = platformId === 'deepseek' && /^\\s*(已阅读\\s*)?\\d+\\s*个\\s*网页\\s*$/.test(item.text) ? 1000 : 0;
+                  const exactDoubaoScore = platformId === 'doubao' && /^\\s*参考\\s*\\d+\\s*篇\\s*资料\\s*$/.test(item.text) ? 1000 : 0;
+                  const tooLargePenalty = area > 50000 ? 1000 : 0;
+                  const yScore = rect.top / Math.max(1, window.innerHeight);
+                  return {
+                    text: item.text,
+                    x: Math.max(1, Math.min(window.innerWidth - 2, rect.left + rect.width / 2)),
+                    y: Math.max(1, Math.min(window.innerHeight - 2, rect.top + rect.height / 2)),
+                    score: exactDeepseekScore + exactDoubaoScore + digitScore + shortTextScore + smallAreaScore + yScore - tooLargePenalty,
+                    desc: `${item.el.tagName.toLowerCase()} ${Math.round(rect.width)}x${Math.round(rect.height)} @${Math.round(rect.left)},${Math.round(rect.top)}`
+                  };
+                })
+                .sort((a, b) => b.score - a.score);
+              return candidates[0] || null;
+            }
+            """,
+            {"triggers": list(triggers), "platformId": platform_id},
+        )
+        if not isinstance(candidate, dict):
+            return ["mouseClickCandidate=(none)"]
+        x = float(candidate.get("x", 0))
+        y = float(candidate.get("y", 0))
+        text = str(candidate.get("text", ""))[:80]
+        desc = str(candidate.get("desc", ""))
+        await page.mouse.move(x, y)
+        await page.wait_for_timeout(200)
+        await page.mouse.click(x, y)
+        await page.wait_for_timeout(10000)
+        return [f"mouseClickCandidate text={text} point={round(x)},{round(y)} target={desc}"]
+    except Exception as exc:  # noqa: BLE001
+        return [f"mouseClickError={exc}"]
+
+
+def _normalize_citations(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    citations: list[dict[str, str]] = []
+    for item in items:
+        url = str(item.get("url", "")).strip()
+        if not url.startswith(("http://", "https://")):
+            continue
+        title = " ".join(str(item.get("title", "")).split()).strip() or url
+        site_name = " ".join(str(item.get("site_name", "")).split()).strip() or _site_name_from_url(url)
+        citations.append({"title": title[:500], "site_name": site_name[:180], "url": url})
+    return citations
+
+
+def _filter_platform_citations(citations: list[dict[str, str]], platform_id: str, answer_url: str | None = None) -> list[dict[str, str]]:
+    filtered: list[dict[str, str]] = []
+    for citation in citations:
+        url = str(citation.get("url") or "").strip()
+        if not _is_external_citation_url(url, platform_id):
+            continue
+        if answer_url and _same_url_without_fragment(url, answer_url):
+            continue
+        filtered.append(citation)
+    return _dedupe_citation_items(filtered)
+
+
+def _same_url_without_fragment(left: str, right: str) -> bool:
+    try:
+        left_parsed = urlparse(left)
+        right_parsed = urlparse(right)
+        return (
+            left_parsed.scheme,
+            left_parsed.netloc,
+            left_parsed.path,
+            left_parsed.query,
+        ) == (
+            right_parsed.scheme,
+            right_parsed.netloc,
+            right_parsed.path,
+            right_parsed.query,
+        )
+    except Exception:
+        return left == right
+
+
+def _log_citation_debug(platform_id: str, lines: list[str]) -> None:
+    if not lines:
+        print(f"[citation-debug] {platform_id}: no debug lines returned", flush=True)
+        return
+    for line in lines:
+        print(f"[citation-debug] {platform_id}: {line}", flush=True)
+
+
+def _site_name_from_url(url: str) -> str:
+    try:
+        hostname = urlparse(url).hostname or url
+    except Exception:
+        return url
+    return hostname.removeprefix("www.")
+
+
 def _blocked_text_match(text: str) -> str | None:
     normalized = text.casefold()
-    for marker in COMMON_BLOCKED_TEXTS:
+    for marker in HUMAN_VERIFICATION_TEXTS:
         if marker.casefold() in normalized:
             return marker
     return None

@@ -35,6 +35,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "login_indicator": "text=/Log in|Sign up|登录|注册/i",
             "blocked_indicator": "text=/verify you are human|请验证您是真人|Cloudflare/i",
         },
+        "citation_triggers": ["source", "sources", "来源"],
     },
     "gemini": {
         "platform_id": "gemini",
@@ -52,6 +53,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "login_indicator": "text=/Sign in|登录/i",
             "blocked_indicator": "text=/unusual traffic|verify|验证码|安全检查/i",
         },
+        "citation_triggers": ["Sources", "引用", "参考", "链接"],
     },
     "deepseek": {
         "platform_id": "deepseek",
@@ -67,6 +69,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "answer_item": ".ds-markdown || .markdown || [class*='markdown'] || [data-message-author-role='assistant']",
             "stop_generating": "button[aria-label*='停止'] || button[aria-label*='Stop'] || [class*='stop']",
         },
+        "citation_triggers": ["个网页", "来源", "source"],
     },
     "doubao": {
         "platform_id": "doubao",
@@ -79,6 +82,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "answer_item": "[data-testid*='message'] || [class*='message'] || [class*='answer'] || [class*='markdown']",
             "blocked_indicator": "text=/安全审核|内容安全|安全验证|风险提示|验证码|风控/i",
         },
+        "citation_triggers": ["参考", "篇资料"],
     },
     "yuanbao": {
         "platform_id": "yuanbao",
@@ -99,6 +103,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "answer_item": ".agent-chat__conv--ai || [class*='conv--ai'] || #answer_text_id || [class*='markdown']",
             "stop_generating": "[data-auto-test='stop_response'] || .stopDealBtn || [class*='stop']",
         },
+        "citation_triggers": ["search-guide-tool", "找到了", "篇相关资料", "相关资料"],
     },
     "tongyi": {
         "platform_id": "tongyi",
@@ -113,6 +118,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "answer_item": ".markdown || [class*='markdown'] || [class*='response']",
             "stop_generating": "button[aria-label*='停止'] || [class*='stop']",
         },
+        "citation_triggers": ["篇来源", "来源"],
     },
     "kimi": {
         "platform_id": "kimi",
@@ -129,6 +135,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "answer_item": ".markdown || [class*='markdown'] || [class*='message-content']",
             "stop_generating": "[class*='stop'] || button[aria-label*='停止'] || button[aria-label*='Stop']",
         },
+        "citation_triggers": ["引用"],
     },
     "wenxin": {
         "platform_id": "wenxin",
@@ -143,6 +150,7 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
             "answer_item": "#answer_text_id || .md-stream || [class*='answer']",
             "stop_generating": "[data-auto-test='stop_response'] || .stopDealBtn || [class*='stop']",
         },
+        "citation_triggers": ["参考", "个网页"],
     },
 }
 

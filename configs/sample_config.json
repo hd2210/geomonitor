@@ -19,8 +19,22 @@
       "url": "https://chatgpt.com",
       "method": "browser",
       "enabled": false,
+      "citation_triggers": [
+        "source",
+        "sources",
+        "来源"
+      ],
       "new_chat_url": "https://chatgpt.com/",
-      "selectors": {}
+      "selectors": {
+        "new_chat": "[data-testid='create-new-chat-button'] || a[aria-label*='New chat'] || button[aria-label*='New chat']",
+        "input": "#prompt-textarea || textarea || [contenteditable='true']",
+        "submit": "[data-testid='send-button'] || button[aria-label*='Send'] || button[type='submit']",
+        "answer_container": "main",
+        "answer_item": "[data-message-author-role='assistant']",
+        "stop_generating": "[data-testid='stop-button'] || button[aria-label*='Stop']",
+        "login_indicator": "text=/Log in|Sign up|登录|注册/i",
+        "blocked_indicator": "text=/verify you are human|请验证您是真人|Cloudflare/i"
+      }
     },
     {
       "platform_id": "gemini",
@@ -28,7 +42,22 @@
       "url": "https://gemini.google.com/app",
       "method": "browser",
       "enabled": false,
-      "selectors": {}
+      "citation_triggers": [
+        "Sources",
+        "引用",
+        "参考",
+        "链接"
+      ],
+      "selectors": {
+        "new_chat": "button[aria-label*='New chat'] || a[aria-label*='New chat'] || button[aria-label*='新建'] || text=New chat || text=新聊天",
+        "input": "rich-textarea div[contenteditable='true'] || div[contenteditable='true'] || textarea",
+        "submit": "button[aria-label*='Send'] || button[aria-label*='发送'] || button.send-button",
+        "answer_container": "main",
+        "answer_item": "message-content || .model-response-text || [data-response-index]",
+        "stop_generating": "button[aria-label*='Stop'] || button[aria-label*='停止']",
+        "login_indicator": "text=/Sign in|登录/i",
+        "blocked_indicator": "text=/unusual traffic|verify|验证码|安全检查/i"
+      }
     },
     {
       "platform_id": "deepseek",
@@ -36,7 +65,19 @@
       "url": "https://chat.deepseek.com",
       "method": "browser",
       "enabled": true,
-      "selectors": {}
+      "citation_triggers": [
+        "个网页"
+      ],
+      "selectors": {
+        "new_chat": "a[href='/'] || button[aria-label*='New'] || button[aria-label*='新建'] || text=新对话",
+        "input": "textarea || [contenteditable='true']",
+        "submit": "button[type='submit'] || button[aria-label*='发送'] || button[aria-label*='Send']",
+        "answer_container": "main || body",
+        "answer_item": ".ds-markdown || .markdown || [class*='markdown'] || [data-message-author-role='assistant']",
+        "stop_generating": "button[aria-label*='停止'] || button[aria-label*='Stop'] || [class*='stop']",
+        "login_indicator": "text=/登录|登陆|Sign in|Log in/i",
+        "blocked_indicator": "text=/验证码|请验证您是真人|正在检查您是否是真人|风控|安全检查|安全审核|内容安全|风险提示|verify you are human|Cloudflare/i"
+      }
     },
     {
       "platform_id": "doubao",
@@ -44,7 +85,19 @@
       "url": "https://www.doubao.com/chat/",
       "method": "browser",
       "enabled": true,
-      "selectors": {}
+      "citation_triggers": [
+        "篇资料"
+      ],
+      "selectors": {
+        "new_chat": "a[href*='new_chat'] || a[href*='new'] || button[aria-label*='New'] || button[aria-label*='新建'] || button[title*='新建'] || text=New chat || text=新建会话 || text=新对话 || text=开启新对话",
+        "input": "textarea || [contenteditable='true'] || .ql-editor",
+        "submit": "button[type='submit'] || button[aria-label*='Send'] || button[aria-label*='发送'] || a[id*='send'] || .send-button-container",
+        "answer_container": "main || body",
+        "answer_item": "[data-testid*='message'] || [class*='message'] || [class*='answer'] || [class*='markdown']",
+        "stop_generating": "button[aria-label*='Stop'] || button[aria-label*='停止'] || [data-auto-test='stop_response'] || .stopDealBtn",
+        "login_indicator": "text=/登录|登陆|Sign in|Log in/i",
+        "blocked_indicator": "text=/安全审核|内容安全|安全验证|风险提示|验证码|风控/i"
+      }
     },
     {
       "platform_id": "yuanbao",
@@ -52,7 +105,20 @@
       "url": "https://yuanbao.tencent.com/",
       "method": "browser",
       "enabled": true,
-      "selectors": {}
+      "citation_triggers": [
+        "search-guide-tool"
+      ],
+      "new_chat_url": "https://yuanbao.tencent.com/",
+      "selectors": {
+        "new_chat": "button[aria-label*='新建'] || button[title*='新建'] || [aria-label*='新建'] || [title*='新建'] || text=新建对话 || text=新对话",
+        "input": "#search-bar .ql-editor || .ql-editor[contenteditable='true'] || [contenteditable='true'] || textarea",
+        "submit": "#yuanbao-send-btn:not([class*='disabled']) || a[id*='send']:not([class*='disabled']) || button[aria-label*='发送']:not([disabled])",
+        "answer_container": "main || body",
+        "answer_item": ".agent-chat__conv--ai || [class*='conv--ai'] || #answer_text_id || [class*='markdown']",
+        "stop_generating": "[data-auto-test='stop_response'] || .stopDealBtn || [class*='stop']",
+        "login_indicator": "text=/登录|登陆|Sign in|Log in/i",
+        "blocked_indicator": "text=/验证码|请验证您是真人|正在检查您是否是真人|风控|安全检查|安全审核|内容安全|风险提示|verify you are human|Cloudflare/i"
+      }
     },
     {
       "platform_id": "tongyi",
@@ -60,7 +126,19 @@
       "url": "https://tongyi.aliyun.com/qianwen/",
       "method": "browser",
       "enabled": true,
-      "selectors": {}
+      "citation_triggers": [
+        "篇来源"
+      ],
+      "selectors": {
+        "new_chat": "a[href*='new_chat'] || a[href*='new'] || button[aria-label*='New'] || button[aria-label*='新建'] || button[title*='新建'] || text=New chat || text=新建会话 || text=新对话 || text=开启新对话",
+        "input": "[contenteditable='true'] || textarea",
+        "submit": "button[aria-label='发送消息'] || button[aria-label*='发送'] || button[type='submit']",
+        "answer_container": "main || body",
+        "answer_item": ".markdown || [class*='markdown'] || [class*='response']",
+        "stop_generating": "button[aria-label*='停止'] || [class*='stop']",
+        "login_indicator": "text=/登录|登陆|Sign in|Log in/i",
+        "blocked_indicator": "text=/验证码|请验证您是真人|正在检查您是否是真人|风控|安全检查|安全审核|内容安全|风险提示|verify you are human|Cloudflare/i"
+      }
     },
     {
       "platform_id": "kimi",
@@ -68,7 +146,20 @@
       "url": "https://www.kimi.com/",
       "method": "browser",
       "enabled": true,
-      "selectors": {}
+      "citation_triggers": [
+        "个结果"
+      ],
+      "new_chat_url": "https://www.kimi.com/?chat_enter_method=new_chat",
+      "selectors": {
+        "new_chat": "a.new-chat-btn[href*='new_chat'] || a[href*='chat_enter_method=new_chat'] || text=新建会话",
+        "input": ".chat-input-editor[contenteditable='true'] || [contenteditable='true'] || textarea",
+        "submit": ".send-button-container:not(.disabled) || button[aria-label*='发送'] || button[aria-label*='Send']",
+        "answer_container": "main || body",
+        "answer_item": ".markdown || [class*='markdown'] || [class*='message-content']",
+        "stop_generating": "[class*='stop'] || button[aria-label*='停止'] || button[aria-label*='Stop']",
+        "login_indicator": "text=/登录|登陆|Sign in|Log in/i",
+        "blocked_indicator": "text=/验证码|请验证您是真人|正在检查您是否是真人|风控|安全检查|安全审核|内容安全|风险提示|verify you are human|Cloudflare/i"
+      }
     },
     {
       "platform_id": "wenxin",
@@ -76,7 +167,19 @@
       "url": "https://yiyan.baidu.com/",
       "method": "browser",
       "enabled": true,
-      "selectors": {}
+      "citation_triggers": [
+        "个网页"
+      ],
+      "selectors": {
+        "new_chat": "a[href*='new_chat'] || a[href*='new'] || button[aria-label*='New'] || button[aria-label*='新建'] || button[title*='新建'] || text=New chat || text=新建会话 || text=新对话 || text=开启新对话",
+        "input": "[data-slate-editor='true'][contenteditable='true'] || [contenteditable='true'] || textarea",
+        "submit": ".send__slzHSuja || button[aria-label*='发送'] || button[type='submit']",
+        "answer_container": "main || body",
+        "answer_item": "#answer_text_id || .md-stream || [class*='answer']",
+        "stop_generating": "[data-auto-test='stop_response'] || .stopDealBtn || [class*='stop']",
+        "login_indicator": "text=/登录|登陆|Sign in|Log in/i",
+        "blocked_indicator": "text=/验证码|请验证您是真人|正在检查您是否是真人|风控|安全检查|安全审核|内容安全|风险提示|verify you are human|Cloudflare/i"
+      }
     }
   ],
   "api_platforms": [
@@ -127,6 +230,7 @@
     "pause_on_blocked_seconds": 20,
     "profile_lock_wait_seconds": 60,
     "browser_concurrency": 5,
-    "api_concurrency": 5
+    "api_concurrency": 5,
+    "question_count": 2
   }
 }

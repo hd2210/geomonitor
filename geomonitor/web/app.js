@@ -3,6 +3,7 @@ const state = {
   admin: false,
   config: null,
   platforms: [],
+  questionCount: 15,
   generated: [],
   currentMonitorId: null,
   pollTimer: null,
@@ -134,7 +135,9 @@ async function adminLogout() {
 async function loadPlatforms() {
   const payload = await fetchJson("/api/user/platforms");
   state.platforms = payload.platforms;
+  state.questionCount = payload.question_count || 15;
   $("enabledPlatformNames").textContent = state.platforms.map((item) => item.platform_name).join("、") || "暂无启用平台";
+  $("configuredQuestionCount").textContent = state.questionCount;
   renderPlatformChoices();
 }
 
@@ -150,7 +153,7 @@ function renderPlatformChoices() {
 async function generateQuestions() {
   const brandName = $("brandName").value.trim();
   const intention = $("intention").value.trim();
-  $("createMessage").textContent = "正在用 GPT-5.5 生成问题...";
+  $("createMessage").textContent = "正在生成问题...";
   $("generateQuestionsButton").disabled = true;
   try {
     const payload = await fetchJson("/api/monitor/generate-questions", {
@@ -161,7 +164,7 @@ async function generateQuestions() {
     state.generated = payload.questions;
     renderGeneratedQuestions();
     $("questionConfirmPanel").classList.remove("hidden");
-    $("createMessage").textContent = `已生成 15 个问题。剩余可创建次数：${payload.remaining_quota}`;
+    $("createMessage").textContent = `已生成 ${payload.question_count || payload.questions.length} 个问题。剩余可创建次数：${payload.remaining_quota}`;
   } catch (error) {
     $("createMessage").textContent = error.message;
   } finally {
@@ -272,7 +275,7 @@ function renderMonitorDetail(payload) {
       <div class="bar large"><div class="bar-fill" style="width:${total ? Math.round(current / total * 100) : 0}%"></div></div>
       <p class="panel-note">${current}/${total} · ${escapeHtml(monitor.notification_message || "")}</p>
     </section>
-    ${renderRunResult(payload.run)}
+    ${renderRunResult(payload.run, monitor)}
   `;
   $("retryFailedButton")?.addEventListener("click", () => retryFailedRequests(monitor.id));
   if (payload.run) bindRunResultControls(payload.run);
@@ -299,7 +302,7 @@ async function retryFailedRequests(monitorId) {
   }
 }
 
-function renderRunResult(run) {
+function renderRunResult(run, monitor) {
   if (!run) return "";
   const platforms = [...new Set(run.answers.map((item) => item.platform_id))].sort();
   const questions = uniqueBy(run.answers, (item) => item.question_id).sort((a, b) => a.question_id.localeCompare(b.question_id));
@@ -320,6 +323,7 @@ function renderRunResult(run) {
       <nav class="tabs result-tabs">
         <button class="tab active" data-result-tab="platforms">各平台表现</button>
         <button class="tab" data-result-tab="questions">问题列表</button>
+        <button class="tab" data-result-tab="citations">引用信源</button>
         <button class="tab" data-result-tab="answers">回答详情</button>
       </nav>
       <section id="resultTab-platforms" class="result-tab-panel">
@@ -353,7 +357,16 @@ function renderRunResult(run) {
             ${questions.map((question) => `<option value="${escapeHtml(question.question_id)}">${escapeHtml(question.question_id)}</option>`).join("")}
           </select>
         </div>
-        <div id="resultAnswerList" class="answer-list">${renderAnswerCards(run.answers, run.run_id)}</div>
+        <div id="resultAnswerList" class="answer-list">${renderAnswerCards(run.answers, run.run_id, monitor.id)}</div>
+      </section>
+      <section id="resultTab-citations" class="result-tab-panel hidden">
+        <div class="filters compact-filters">
+          <select id="citationPlatformFilter">
+            <option value="">全部平台</option>
+            ${platforms.map((platform) => `<option value="${escapeHtml(platform)}">${escapeHtml(platform)}</option>`).join("")}
+          </select>
+        </div>
+        <div id="citationSourceList" class="citation-layout">${renderCitationSources(run.answers, "")}</div>
       </section>
     </section>
   `;
@@ -380,10 +393,18 @@ function bindRunResultControls(run) {
     $("resultAnswerList").innerHTML = renderAnswerCards(
       run.answers.filter((answer) => (!platform || answer.platform_id === platform) && (!question || answer.question_id === question)),
       run.run_id,
+      state.currentMonitorId,
     );
+    bindRetryAnswerButtons();
   };
   $("answerPlatformFilter")?.addEventListener("change", renderFilteredAnswers);
   $("answerQuestionFilter")?.addEventListener("change", renderFilteredAnswers);
+  bindRetryAnswerButtons();
+  $("citationPlatformFilter")?.addEventListener("change", (event) => {
+    $("citationSourceList").innerHTML = renderCitationSources(run.answers, event.target.value);
+    bindCitationSourceClicks(run.answers, event.target.value);
+  });
+  bindCitationSourceClicks(run.answers, "");
 }
 
 function renderPlatformSummaryRows(rows) {
@@ -402,11 +423,92 @@ function renderQuestionCards(answers, platform) {
     .join("");
 }
 
-function renderAnswerCards(answers, runId) {
+function renderAnswerCards(answers, runId, monitorId) {
   return answers.map((answer) => {
     const screenshotUrl = answer.screenshot_path ? `/runs/${encodeURIComponent(runId)}/${answer.screenshot_path}` : "";
-    return `<div class="answer-card"><div><div class="badge-row"><span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span><span class="badge">${escapeHtml(answer.platform_id)}</span><span class="badge">${escapeHtml(answer.question_id)}</span></div><strong>${escapeHtml(answer.question)}</strong><p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "", 220))}</p></div>${screenshotUrl ? `<a class="answer-action" href="${escapeHtml(screenshotUrl)}" target="_blank" rel="noreferrer">查看截图</a>` : ""}</div>`;
+    const canRetry = ["failed", "partial_success", "blocked"].includes(answer.status);
+    const citationNote = answer.citation_error ? `引用信源抓取失败：${answer.citation_error}` : `引用信源：${(answer.citations || []).length} 条`;
+    const answerUrl = answer.answer_url || "";
+    return `<div class="answer-card"><div><div class="badge-row"><span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span><span class="badge">${escapeHtml(answer.platform_id)}</span><span class="badge">${escapeHtml(answer.question_id)}</span></div><strong>${escapeHtml(answer.question)}</strong><p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "", 220))}</p><p class="panel-note">${escapeHtml(citationNote)}</p></div><div class="answer-actions">${answerUrl ? `<a class="answer-action" href="${escapeHtml(answerUrl)}" target="_blank" rel="noreferrer">打开回答</a>` : ""}${screenshotUrl ? `<a class="answer-action" href="${escapeHtml(screenshotUrl)}" target="_blank" rel="noreferrer">查看截图</a>` : ""}${canRetry ? `<button class="answer-action retry-answer" data-monitor-id="${escapeHtml(monitorId)}" data-platform-id="${escapeHtml(answer.platform_id)}" data-question-id="${escapeHtml(answer.question_id)}">单条重试</button>` : ""}</div></div>`;
   }).join("");
+}
+
+function renderCitationSources(answers, platform) {
+  const rows = citationRows(answers, platform);
+  if (!rows.length) return `<div class="empty-state compact">暂无引用信源数据</div>`;
+  const sourceCounts = new Map();
+  rows.forEach((row) => {
+    const key = row.site_name || hostnameFromUrl(row.url);
+    sourceCounts.set(key, (sourceCounts.get(key) || 0) + 1);
+  });
+  return `
+    <div class="citation-sources">
+      ${[...sourceCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([site, count], index) => `
+        <button class="citation-source ${index === 0 ? "active" : ""}" data-site-name="${escapeHtml(site)}">
+          <strong>${escapeHtml(site)}</strong>
+          <span>${count} 次引用</span>
+        </button>
+      `).join("")}
+    </div>
+    <div id="citationPageList" class="citation-pages"></div>
+  `;
+}
+
+function bindCitationSourceClicks(answers, platform) {
+  const buttons = [...document.querySelectorAll(".citation-source")];
+  const renderPages = (site) => {
+    buttons.forEach((button) => button.classList.toggle("active", button.dataset.siteName === site));
+    $("citationPageList").innerHTML = renderCitationPages(citationRows(answers, platform), site);
+  };
+  buttons.forEach((button) => button.addEventListener("click", () => renderPages(button.dataset.siteName)));
+  if (buttons[0]) renderPages(buttons[0].dataset.siteName);
+}
+
+function renderCitationPages(rows, site) {
+  const pageMap = new Map();
+  rows.filter((row) => (row.site_name || hostnameFromUrl(row.url)) === site).forEach((row) => {
+    const key = row.url;
+    const current = pageMap.get(key) || {title: row.title || row.url, url: row.url, count: 0};
+    current.count += 1;
+    pageMap.set(key, current);
+  });
+  return [...pageMap.values()]
+    .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title))
+    .map((page) => `<a class="citation-page" href="${escapeHtml(page.url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(page.title)}</strong><span>${page.count} 次引用</span></a>`)
+    .join("") || `<div class="empty-state compact">暂无引用网页</div>`;
+}
+
+function citationRows(answers, platform) {
+  return answers
+    .filter((answer) => !platform || answer.platform_id === platform)
+    .flatMap((answer) => (answer.citations || []).map((citation) => ({
+      platform_id: answer.platform_id,
+      title: citation.title || citation.url,
+      site_name: citation.site_name || hostnameFromUrl(citation.url),
+      url: citation.url,
+    })))
+    .filter((row) => row.url);
+}
+
+async function retrySingleAnswer(button) {
+  button.disabled = true;
+  button.textContent = "重试中...";
+  await fetchJson("/api/monitor/retry-answer", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      monitor_id: Number(button.dataset.monitorId),
+      platform_id: button.dataset.platformId,
+      question_id: button.dataset.questionId,
+    }),
+  });
+  startMonitorPolling(Number(button.dataset.monitorId));
+}
+
+function bindRetryAnswerButtons() {
+  document.querySelectorAll(".retry-answer").forEach((button) => {
+    button.addEventListener("click", () => retrySingleAnswer(button));
+  });
 }
 
 function setUserView(view) {
@@ -475,6 +577,7 @@ function renderAdminConfig() {
   document.querySelectorAll("input[name='adminRunMode']").forEach((input) => input.checked = input.value === (state.config.run_mode || "browser"));
   $("adminBrowserConcurrency").value = state.config.runner.browser_concurrency || 2;
   $("adminApiConcurrency").value = state.config.runner.api_concurrency || 5;
+  $("adminQuestionCount").value = state.config.runner.question_count || 15;
   $("adminBrowserPanel").classList.toggle("hidden", (state.config.run_mode || "browser") !== "browser");
   $("adminApiPanel").classList.toggle("hidden", state.config.run_mode !== "api");
   $("adminWebsites").innerHTML = state.config.browser_platforms.map((platform, index) => `
@@ -483,6 +586,7 @@ function renderAdminConfig() {
       <label><span>网站 ID</span><input class="admin-website-id" value="${escapeHtml(platform.platform_id)}"/></label>
       <label><span>网站名称</span><input class="admin-website-name" value="${escapeHtml(platform.platform_name)}"/></label>
       <label><span>访问地址</span><input class="admin-website-url" value="${escapeHtml(platform.url || "")}"/></label>
+      <label><span>引用信源标识（每行一个）</span><textarea class="admin-website-citations" rows="4" placeholder="例如：引用&#10;来源">${escapeHtml((platform.citation_triggers || []).join("\n"))}</textarea></label>
       <button class="secondary-button admin-prepare-login" type="button">准备登录</button>
     </div>
   `).join("");
@@ -501,12 +605,14 @@ function renderAdminConfig() {
 function bindAdminEditors() {
   $("adminBrowserConcurrency").addEventListener("input", (e) => state.config.runner.browser_concurrency = Number(e.target.value || 2));
   $("adminApiConcurrency").addEventListener("input", (e) => state.config.runner.api_concurrency = Number(e.target.value || 5));
+  $("adminQuestionCount").addEventListener("input", (e) => state.config.runner.question_count = Number(e.target.value || 15));
   document.querySelectorAll("[data-admin-website]").forEach((card) => {
     const platform = state.config.browser_platforms[Number(card.dataset.adminWebsite)];
     card.querySelector(".admin-website-enabled").addEventListener("change", (e) => platform.enabled = e.target.checked);
     card.querySelector(".admin-website-id").addEventListener("input", (e) => platform.platform_id = e.target.value);
     card.querySelector(".admin-website-name").addEventListener("input", (e) => platform.platform_name = e.target.value);
     card.querySelector(".admin-website-url").addEventListener("input", (e) => platform.url = e.target.value);
+    card.querySelector(".admin-website-citations").addEventListener("input", (e) => platform.citation_triggers = e.target.value.split("\n").map((item) => item.trim()).filter(Boolean));
     card.querySelector(".admin-prepare-login").addEventListener("click", () => prepareLogin(platform.platform_id));
   });
   document.querySelectorAll("[data-admin-model]").forEach((card) => {
@@ -536,6 +642,7 @@ async function saveAdminConfig() {
       runner: {
         browser_concurrency: Number(state.config.runner?.browser_concurrency || 2),
         api_concurrency: Number(state.config.runner?.api_concurrency || 5),
+        question_count: Number(state.config.runner?.question_count || 15),
       },
     })});
     $("adminConfigMessage").textContent = "已保存。";
@@ -601,6 +708,14 @@ function truncate(value, length) {
 
 function formatPercent(value) {
   return `${(Number(value || 0) * 100).toFixed(1)}%`;
+}
+
+function hostnameFromUrl(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
 }
 
 init();

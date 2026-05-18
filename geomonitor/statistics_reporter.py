@@ -104,8 +104,12 @@ class StatisticsReporter:
         global_summary = self.build_global_summary(platform_summary)
         self._write_platform_csv(output / "platform_summary.csv", platform_summary)
         self._write_global_csv(output / "global_summary.csv", global_summary)
+        self._write_citation_csvs(output, answers)
         self._write_report(output / "report.md", answers, platform_summary, global_summary)
         return platform_summary, global_summary
+
+    def write_citation_outputs(self, run_dir: str | Path, answers: list[AnswerRecord]) -> None:
+        self._write_citation_csvs(Path(run_dir), answers)
 
     @staticmethod
     def _write_platform_csv(path: Path, rows: list[PlatformSummary]) -> None:
@@ -161,6 +165,42 @@ class StatisticsReporter:
                     }
                 )
 
+    @staticmethod
+    def _write_citation_csvs(output: Path, answers: list[AnswerRecord]) -> None:
+        site_counts: dict[tuple[str, str], int] = {}
+        page_counts: dict[tuple[str, str, str, str], int] = {}
+        for answer in answers:
+            for citation in answer.citations or []:
+                site = str(citation.get("site_name") or "").strip()
+                url = str(citation.get("url") or "").strip()
+                title = str(citation.get("title") or url).strip()
+                if not site or not url:
+                    continue
+                site_counts[(answer.platform_id, site)] = site_counts.get((answer.platform_id, site), 0) + 1
+                page_key = (answer.platform_id, site, url, title)
+                page_counts[page_key] = page_counts.get(page_key, 0) + 1
+
+        with (output / "citation_summary.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["run_id", "platform_id", "site_name", "citation_count"])
+            writer.writeheader()
+            for (platform_id, site), count in sorted(site_counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1])):
+                writer.writerow({"run_id": answers[0].run_id if answers else "", "platform_id": platform_id, "site_name": site, "citation_count": count})
+
+        with (output / "citation_pages.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["run_id", "platform_id", "site_name", "title", "url", "citation_count"])
+            writer.writeheader()
+            for (platform_id, site, url, title), count in sorted(page_counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1], item[0][3])):
+                writer.writerow(
+                    {
+                        "run_id": answers[0].run_id if answers else "",
+                        "platform_id": platform_id,
+                        "site_name": site,
+                        "title": title,
+                        "url": url,
+                        "citation_count": count,
+                    }
+                )
+
     def _write_report(
         self,
         path: Path,
@@ -206,7 +246,7 @@ class StatisticsReporter:
                     f"| {failure.platform_id} | {failure.question_id} | {failure.status} | {(failure.error_message or '').replace('|', '/')} |"
                 )
 
-        lines.extend(["", "## Output Files", "", "- `raw_answers.jsonl`", "- `keyword_analysis.jsonl`", "- `platform_summary.csv`", "- `global_summary.csv`", "- `api_responses/`"])
+        lines.extend(["", "## Output Files", "", "- `raw_answers.jsonl`", "- `keyword_analysis.jsonl`", "- `platform_summary.csv`", "- `global_summary.csv`", "- `citation_summary.csv`", "- `citation_pages.csv`", "- `api_responses/`"])
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

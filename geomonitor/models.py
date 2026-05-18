@@ -54,6 +54,13 @@ class PlatformSelectors:
 
 
 @dataclass(frozen=True)
+class Citation:
+    title: str
+    site_name: str
+    url: str
+
+
+@dataclass(frozen=True)
 class AIPlatform:
     platform_id: str
     platform_name: str
@@ -66,6 +73,7 @@ class AIPlatform:
     api_base_url: str | None = None
     web_search: bool = True
     web_search_vendor: str | None = None
+    citation_triggers: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,7 @@ class RunnerConfig:
     profile_lock_wait_seconds: int = 60
     browser_concurrency: int = 2
     api_concurrency: int = 5
+    question_count: int = 15
 
 
 @dataclass(frozen=True)
@@ -117,12 +126,15 @@ class AnswerRecord:
     question_id: str
     question: str
     answer_text: str | None = None
+    answer_url: str | None = None
     screenshot_path: str | None = None
     raw_html_path: str | None = None
     raw_response_path: str | None = None
     status: AnswerStatus = "failed"
     error_message: str | None = None
     screenshot_error: str | None = None
+    citations: list[dict[str, str]] = field(default_factory=list)
+    citation_error: str | None = None
 
 
 @dataclass(frozen=True)
