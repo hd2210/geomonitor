@@ -6,7 +6,10 @@ const state = {
   questionCount: 15,
   generated: [],
   currentMonitorId: null,
+  activeMonitorId: null,
   pollTimer: null,
+  adminTab: "config",
+  reportChart: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -35,6 +38,9 @@ function bindStaticEvents() {
   $("refreshAdminUsersButton").addEventListener("click", loadAdminUsers);
   document.querySelectorAll("[data-user-view]").forEach((button) => {
     button.addEventListener("click", () => setUserView(button.dataset.userView));
+  });
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.addEventListener("click", () => setAdminTab(button.dataset.adminTab));
   });
   document.querySelectorAll("input[name='adminRunMode']").forEach((input) => {
     input.addEventListener("change", () => {
@@ -69,9 +75,13 @@ async function initAdmin() {
   state.admin = me.authenticated;
   $("adminLoginPanel").classList.toggle("hidden", state.admin);
   $("adminPanel").classList.toggle("hidden", !state.admin);
+  $("adminTabs")?.classList.toggle("hidden", !state.admin);
+  $("saveAdminConfigButton")?.classList.toggle("hidden", !state.admin);
+  $("adminLogoutButton")?.classList.toggle("hidden", !state.admin);
   if (state.admin) {
     await loadAdminConfig();
     await loadAdminUsers();
+    setAdminTab("config");
   }
 }
 
@@ -202,6 +212,7 @@ async function startMonitor() {
       }),
     });
     state.currentMonitorId = payload.monitor.id;
+    state.activeMonitorId = payload.monitor.id;
     $("createMessage").textContent = "监测已开始。";
     setUserView("results");
     await loadMonitors();
@@ -215,32 +226,56 @@ async function startMonitor() {
 
 function startMonitorPolling(monitorId) {
   if (state.pollTimer) clearInterval(state.pollTimer);
+  state.activeMonitorId = monitorId;
   state.pollTimer = setInterval(async () => {
     const payload = await fetchJson(`/api/monitor?id=${encodeURIComponent(monitorId)}`);
-    renderMonitorDetail(payload);
+    await loadMonitors({preserveDetail: true});
+    if (state.currentMonitorId === monitorId) {
+      renderMonitorUnavailable(payload.monitor);
+    }
     if (!isActiveMonitorStatus(payload.monitor.status)) {
       clearInterval(state.pollTimer);
       state.pollTimer = null;
+      state.activeMonitorId = null;
       await loadMonitors();
+      if (state.currentMonitorId === monitorId || !$("monitorDetail").innerHTML.trim()) {
+        await loadMonitorDetail(monitorId);
+      }
     }
   }, 2000);
 }
 
-async function loadMonitors() {
+async function loadMonitors(options = {}) {
   const monitors = await fetchJson("/api/monitors");
   updateMonitorQuota(monitors);
   $("monitorList").innerHTML = monitors.map((monitor) => `
-    <button class="monitor-item" data-monitor-id="${monitor.id}">
+    <button class="monitor-item ${monitor.id === state.currentMonitorId ? "active" : ""}" data-monitor-id="${monitor.id}" ${isActiveMonitorStatus(monitor.status) ? "data-active-monitor='true'" : ""}>
       <strong>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</strong>
       <span>${escapeHtml(monitor.status)} · ${escapeHtml(monitor.created_at)}${monitor.completed_at ? ` · 完成 ${escapeHtml(monitor.completed_at)}` : ""}</span>
+      ${isActiveMonitorStatus(monitor.status) ? `<em>${escapeHtml(monitor.progress_message || "运行中")} · ${escapeHtml(monitor.progress_current || 0)}/${escapeHtml(monitor.progress_total || 0)}</em>` : ""}
     </button>
   `).join("") || `<div class="empty-state compact">暂无监测任务</div>`;
   document.querySelectorAll("[data-monitor-id]").forEach((button) => {
-    button.addEventListener("click", () => loadMonitorDetail(button.dataset.monitorId));
+    button.addEventListener("click", () => {
+      const id = Number(button.dataset.monitorId);
+      const monitor = monitors.find((item) => Number(item.id) === id);
+      if (monitor && isActiveMonitorStatus(monitor.status)) {
+        state.currentMonitorId = id;
+        renderMonitorUnavailable(monitor);
+        return;
+      }
+      loadMonitorDetail(id);
+    });
   });
-  if (monitors.length && !state.currentMonitorId) {
-    state.currentMonitorId = monitors[0].id;
-    await loadMonitorDetail(state.currentMonitorId);
+  if (!options.preserveDetail && monitors.length && !state.currentMonitorId) {
+    const firstCompleted = monitors.find((monitor) => !isActiveMonitorStatus(monitor.status));
+    if (firstCompleted) {
+      state.currentMonitorId = firstCompleted.id;
+      await loadMonitorDetail(state.currentMonitorId);
+    } else {
+      state.currentMonitorId = monitors[0].id;
+      renderMonitorUnavailable(monitors[0]);
+    }
   }
 }
 
@@ -253,8 +288,30 @@ function updateMonitorQuota(monitors) {
 async function loadMonitorDetail(id) {
   state.currentMonitorId = id;
   const payload = await fetchJson(`/api/monitor?id=${encodeURIComponent(id)}`);
+  if (isActiveMonitorStatus(payload.monitor.status)) {
+    renderMonitorUnavailable(payload.monitor);
+    startMonitorPolling(id);
+    return;
+  }
   renderMonitorDetail(payload);
-  if (isActiveMonitorStatus(payload.monitor.status)) startMonitorPolling(id);
+}
+
+function renderMonitorUnavailable(monitor) {
+  const total = monitor.progress_total || 0;
+  const current = monitor.progress_current || 0;
+  $("monitorDetail").innerHTML = `
+    <section class="panel running-panel">
+      <div class="panel-header">
+        <div>
+          <h3>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</h3>
+          <p class="panel-note">任务正在运行，完成后可查看完整报告。</p>
+        </div>
+        <span class="badge running">运行中</span>
+      </div>
+      <div class="bar large"><div class="bar-fill" style="width:${total ? Math.round(current / total * 100) : 0}%"></div></div>
+      <p class="panel-note">${current}/${total} · ${escapeHtml(monitor.progress_message || "")}</p>
+    </section>
+  `;
 }
 
 function renderMonitorDetail(payload) {
@@ -278,7 +335,7 @@ function renderMonitorDetail(payload) {
     ${renderRunResult(payload.run, monitor)}
   `;
   $("retryFailedButton")?.addEventListener("click", () => retryFailedRequests(monitor.id));
-  if (payload.run) bindRunResultControls(payload.run);
+  if (payload.run) bindRunResultControls(payload.run, monitor);
 }
 
 async function retryFailedRequests(monitorId) {
@@ -306,18 +363,33 @@ function renderRunResult(run, monitor) {
   if (!run) return "";
   const platforms = [...new Set(run.answers.map((item) => item.platform_id))].sort();
   const questions = uniqueBy(run.answers, (item) => item.question_id).sort((a, b) => a.question_id.localeCompare(b.question_id));
+  const metrics = buildReportMetrics(run, monitor, "");
   return `
-    <section class="panel">
-      <h3>品牌提及率与排名</h3>
-      <div class="keyword-grid">
-        ${run.global_summary.map((row) => `
-          <div class="keyword-card">
-            <strong>${escapeHtml(row.keyword)}</strong>
-            <span class="rate">${formatPercent(Number(row.appearance_rate || 0))}</span>
-            <span class="eyebrow">均排 ${escapeHtml(row.avg_rank || "-")} · 最佳 ${escapeHtml(row.best_rank || "-")}</span>
-          </div>
-        `).join("")}
+    <section class="report-hero panel">
+      <div>
+        <p class="panel-note">监测意图：</p>
+        <h3>${escapeHtml(monitor.intention)}</h3>
+        <p class="panel-note">本品名称：<strong>${escapeHtml(monitor.brand_name)}</strong></p>
       </div>
+      <div class="report-actions">
+        <span class="badge success">${escapeHtml(monitor.status)}</span>
+      </div>
+    </section>
+    <section class="panel report-filter-panel">
+      <label>
+        <span>查看平台</span>
+        <select id="platformSummaryFilter">
+          <option value="">全部平台</option>
+          ${platforms.map((platform) => `<option value="${escapeHtml(platform)}">${escapeHtml(platform)}</option>`).join("")}
+        </select>
+      </label>
+    </section>
+    <section class="metric-strip">
+      <article class="metric-card"><span>提及率 / 平均排名</span><strong id="metricTargetRate">${formatPercent(metrics.targetRate)} / ${escapeHtml(metrics.targetAvgRank)}</strong></article>
+      <article class="metric-card"><span>Top1推荐率</span><strong id="metricTop1Rate">${formatPercent(metrics.top1Rate)}</strong></article>
+      <article class="metric-card"><span>Top3推荐率</span><strong id="metricTop3Rate">${formatPercent(metrics.top3Rate)}</strong></article>
+      <article class="metric-card"><span>Top5推荐率</span><strong id="metricTop5Rate">${formatPercent(metrics.top5Rate)}</strong></article>
+      <article class="metric-card"><span>引用信源</span><strong id="metricCitationCount">${escapeHtml(metrics.citationCount)}</strong></article>
     </section>
     <section class="panel">
       <nav class="tabs result-tabs">
@@ -327,11 +399,17 @@ function renderRunResult(run, monitor) {
         <button class="tab" data-result-tab="answers">回答详情</button>
       </nav>
       <section id="resultTab-platforms" class="result-tab-panel">
-        <div class="filters compact-filters">
-          <select id="platformSummaryFilter">
-            <option value="">全部平台</option>
-            ${platforms.map((platform) => `<option value="${escapeHtml(platform)}">${escapeHtml(platform)}</option>`).join("")}
-          </select>
+        <div class="report-grid">
+          <article class="report-card">
+            <h3>提及率排行榜</h3>
+            <div class="table-wrap"><table><thead><tr><th>排名</th><th>品牌</th><th>占比</th></tr></thead><tbody id="globalRankingBody">
+              ${renderGlobalRankingRows(run.global_summary, monitor.brand_name)}
+            </tbody></table></div>
+          </article>
+          <article class="report-card">
+            <h3>本品在各AI平台提及率排名</h3>
+            <canvas id="platformRankChart" height="170"></canvas>
+          </article>
         </div>
         <div class="table-wrap"><table><thead><tr><th>平台</th><th>品牌</th><th>出现</th><th>出现率</th><th>均排</th></tr></thead><tbody id="platformSummaryBody">
           ${renderPlatformSummaryRows(run.platform_summary)}
@@ -372,7 +450,7 @@ function renderRunResult(run, monitor) {
   `;
 }
 
-function bindRunResultControls(run) {
+function bindRunResultControls(run, monitor) {
   document.querySelectorAll("[data-result-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll("[data-result-tab]").forEach((item) => item.classList.toggle("active", item === button));
@@ -381,8 +459,7 @@ function bindRunResultControls(run) {
     });
   });
   $("platformSummaryFilter")?.addEventListener("change", (event) => {
-    const platform = event.target.value;
-    $("platformSummaryBody").innerHTML = renderPlatformSummaryRows(run.platform_summary.filter((row) => !platform || row.platform_id === platform));
+    updatePlatformReport(run, monitor, event.target.value);
   });
   $("questionPlatformFilter")?.addEventListener("change", (event) => {
     $("resultQuestionList").innerHTML = renderQuestionCards(run.answers, event.target.value);
@@ -405,6 +482,78 @@ function bindRunResultControls(run) {
     bindCitationSourceClicks(run.answers, event.target.value);
   });
   bindCitationSourceClicks(run.answers, "");
+  updatePlatformReport(run, monitor, "");
+}
+
+function updatePlatformReport(run, monitor, platform) {
+  const metrics = buildReportMetrics(run, monitor, platform);
+  $("metricTargetRate").textContent = `${formatPercent(metrics.targetRate)} / ${escapeHtml(metrics.targetAvgRank)}`;
+  $("metricTop1Rate").textContent = formatPercent(metrics.top1Rate);
+  $("metricTop3Rate").textContent = formatPercent(metrics.top3Rate);
+  $("metricTop5Rate").textContent = formatPercent(metrics.top5Rate);
+  $("metricCitationCount").textContent = metrics.citationCount;
+  const rankingRows = platform ? run.platform_summary.filter((row) => row.platform_id === platform) : run.global_summary;
+  $("globalRankingBody").innerHTML = renderGlobalRankingRows(rankingRows, monitor.brand_name);
+  $("platformSummaryBody").innerHTML = renderPlatformSummaryRows(run.platform_summary.filter((row) => !platform || row.platform_id === platform));
+  renderReportCharts(run, monitor, platform);
+}
+
+function buildReportMetrics(run, monitor, platform = "") {
+  const summaryRows = platform ? run.platform_summary.filter((row) => row.platform_id === platform) : run.global_summary;
+  const target = summaryRows.find((row) => normalizeText(row.keyword) === normalizeText(monitor.brand_name)) || summaryRows[0] || {};
+  const successfulAnswers = run.answers.filter((answer) => isSuccessfulAnswer(answer) && (!platform || answer.platform_id === platform));
+  const targetAnalyses = (run.analyses || [])
+    .filter((item) => !platform || item.platform_id === platform)
+    .flatMap((item) => item.keyword_analysis || [])
+    .filter((item) => normalizeText(item.keyword) === normalizeText(target.keyword || monitor.brand_name) && item.appeared);
+  const denominator = successfulAnswers.length || Number(target.total_answers || target.total_questions || 0) || 1;
+  const countRank = (limit) => targetAnalyses.filter((item) => Number(item.rank || 999) <= limit).length / denominator;
+  return {
+    targetRate: Number(target.appearance_rate || 0),
+    targetAvgRank: target.avg_rank || "-",
+    top1Rate: countRank(1),
+    top3Rate: countRank(3),
+    top5Rate: countRank(5),
+    citationCount: citationRows(run.answers, platform).length,
+  };
+}
+
+function renderGlobalRankingRows(rows, brandName) {
+  return [...rows]
+    .sort((a, b) => Number(b.appearance_rate || 0) - Number(a.appearance_rate || 0))
+    .map((row, index) => `<tr><td><span class="rank-index">${index + 1}</span></td><td>${escapeHtml(row.keyword)}${normalizeText(row.keyword) === normalizeText(brandName) ? ` <span class="brand-tag">当前品牌</span>` : ""}</td><td class="number-cell">${formatPercent(Number(row.appearance_rate || 0))}</td></tr>`)
+    .join("");
+}
+
+function renderReportCharts(run, monitor, platform = "") {
+  if (!window.Chart) return;
+  const canvas = $("platformRankChart");
+  if (!canvas) return;
+  if (state.reportChart) {
+    state.reportChart.destroy();
+    state.reportChart = null;
+  }
+  const targetKeyword = (run.global_summary.find((row) => normalizeText(row.keyword) === normalizeText(monitor.brand_name)) || run.global_summary[0] || {}).keyword;
+  const platformRows = run.platform_summary
+    .filter((row) => row.keyword === targetKeyword && (!platform || row.platform_id === platform))
+    .slice(0, 8);
+  state.reportChart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: platformRows.map((row) => row.platform_id),
+      datasets: [{
+        label: "提及率",
+        data: platformRows.map((row) => Number(row.appearance_rate || 0) * 100),
+        backgroundColor: "#2563ff",
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: {legend: {display: false}},
+      scales: {y: {beginAtZero: true, max: 100, ticks: {callback: (value) => `${value}%`}}},
+    },
+  });
 }
 
 function renderPlatformSummaryRows(rows) {
@@ -429,7 +578,10 @@ function renderAnswerCards(answers, runId, monitorId) {
     const canRetry = ["failed", "partial_success", "blocked"].includes(answer.status);
     const citationNote = answer.citation_error ? `引用信源抓取失败：${answer.citation_error}` : `引用信源：${(answer.citations || []).length} 条`;
     const answerUrl = answer.answer_url || "";
-    return `<div class="answer-card"><div><div class="badge-row"><span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span><span class="badge">${escapeHtml(answer.platform_id)}</span><span class="badge">${escapeHtml(answer.question_id)}</span></div><strong>${escapeHtml(answer.question)}</strong><p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "", 220))}</p><p class="panel-note">${escapeHtml(citationNote)}</p></div><div class="answer-actions">${answerUrl ? `<a class="answer-action" href="${escapeHtml(answerUrl)}" target="_blank" rel="noreferrer">打开回答</a>` : ""}${screenshotUrl ? `<a class="answer-action" href="${escapeHtml(screenshotUrl)}" target="_blank" rel="noreferrer">查看截图</a>` : ""}${canRetry ? `<button class="answer-action retry-answer" data-monitor-id="${escapeHtml(monitorId)}" data-platform-id="${escapeHtml(answer.platform_id)}" data-question-id="${escapeHtml(answer.question_id)}">单条重试</button>` : ""}</div></div>`;
+    const questionBadge = answerUrl
+      ? `<a class="badge question-link" href="${escapeHtml(answerUrl)}" target="_blank" rel="noreferrer" title="打开回答">${escapeHtml(answer.question_id)}</a>`
+      : `<span class="badge">${escapeHtml(answer.question_id)}</span>`;
+    return `<div class="answer-card"><div><div class="badge-row"><span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span><span class="badge">${escapeHtml(answer.platform_id)}</span>${questionBadge}</div><strong>${escapeHtml(answer.question)}</strong><p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "", 220))}</p><p class="panel-note">${escapeHtml(citationNote)}</p></div><div class="answer-actions">${screenshotUrl ? `<a class="answer-action" href="${escapeHtml(screenshotUrl)}" target="_blank" rel="noreferrer">查看截图</a>` : ""}${canRetry ? `<button class="answer-action retry-answer" data-monitor-id="${escapeHtml(monitorId)}" data-platform-id="${escapeHtml(answer.platform_id)}" data-question-id="${escapeHtml(answer.question_id)}">单条重试</button>` : ""}</div></div>`;
   }).join("");
 }
 
@@ -515,6 +667,8 @@ function setUserView(view) {
   document.querySelectorAll("[data-user-view]").forEach((button) => button.classList.toggle("active", button.dataset.userView === view));
   $("createView").classList.toggle("hidden", view !== "create");
   $("resultsView").classList.toggle("hidden", view !== "results");
+  document.querySelector(".user-main")?.classList.toggle("create-mode", view === "create");
+  document.querySelector(".user-main")?.classList.toggle("results-mode", view === "results");
 }
 
 async function loadAdminConfig() {
@@ -555,6 +709,27 @@ function renderAdminUsers(users) {
       </div>
     </article>
   `).join("") || `<div class="empty-state compact">暂无注册用户</div>`;
+  $("adminMonitors").innerHTML = users.map((user) => `
+    <article class="admin-user-card">
+      <div class="admin-user-head">
+        <div>
+          <strong>${escapeHtml(user.company_name)} · ${escapeHtml(user.phone)}</strong>
+          <span>已创建 ${escapeHtml(user.monitor_count || 0)} 次，可用 ${escapeHtml(user.remaining_quota || 0)} 次</span>
+        </div>
+      </div>
+      <div class="admin-monitor-list">
+        ${(user.monitors || []).map((monitor) => `
+          <div class="admin-monitor-row">
+            <div>
+              <strong>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</strong>
+              <span>${escapeHtml(monitor.status)} · 创建 ${escapeHtml(monitor.created_at)}${monitor.completed_at ? ` · 完成 ${escapeHtml(monitor.completed_at)}` : ""}</span>
+            </div>
+            <span class="badge">${escapeHtml(monitor.run_id || "no run")}</span>
+          </div>
+        `).join("") || `<div class="empty-state compact">暂无监测任务</div>`}
+      </div>
+    </article>
+  `).join("") || `<div class="empty-state compact">暂无监测任务</div>`;
   document.querySelectorAll("[data-admin-user]").forEach((card) => {
     card.querySelector(".admin-save-quota").addEventListener("click", () => saveUserQuota(card));
   });
@@ -600,6 +775,15 @@ function renderAdminConfig() {
     </div>
   `).join("");
   bindAdminEditors();
+  setAdminTab(state.adminTab || "config");
+}
+
+function setAdminTab(tab) {
+  state.adminTab = tab;
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
+  document.querySelectorAll("[data-admin-panel]").forEach((panel) => panel.classList.toggle("hidden", panel.dataset.adminPanel !== tab));
+  const saveVisible = state.admin && ["config", "websites", "api"].includes(tab);
+  $("saveAdminConfigButton")?.classList.toggle("hidden", !saveVisible);
 }
 
 function bindAdminEditors() {
@@ -708,6 +892,10 @@ function truncate(value, length) {
 
 function formatPercent(value) {
   return `${(Number(value || 0) * 100).toFixed(1)}%`;
+}
+
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function hostnameFromUrl(url) {
