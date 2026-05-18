@@ -178,6 +178,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._require_admin()
                 self._json({"users": self.store.list_users_with_monitors()})
                 return
+            if path == "/api/admin/monitor":
+                self._require_admin()
+                monitor_id = int(_single_query_value(parsed.query, "id"))
+                self._json(self._admin_monitor_payload(monitor_id))
+                return
             if path == "/api/runs":
                 self._require_admin()
                 self._json(self._list_runs())
@@ -416,6 +421,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _monitor_payload(self, monitor_id: int, user_id: int) -> dict:
         monitor = self.store.get_monitor(monitor_id, user_id=user_id)
+        if not monitor:
+            raise FileNotFoundError("monitor not found")
+        payload = {"monitor": monitor, "run": None}
+        if monitor.get("run_id"):
+            try:
+                payload["run"] = self._run_payload(str(monitor["run_id"]))
+            except Exception:
+                payload["run"] = None
+        return payload
+
+    def _admin_monitor_payload(self, monitor_id: int) -> dict:
+        monitor = self.store.get_monitor(monitor_id)
         if not monitor:
             raise FileNotFoundError("monitor not found")
         payload = {"monitor": monitor, "run": None}

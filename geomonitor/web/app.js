@@ -359,7 +359,7 @@ async function retryFailedRequests(monitorId) {
   }
 }
 
-function renderRunResult(run, monitor) {
+function renderRunResult(run, monitor, options = {}) {
   if (!run) return "";
   const platforms = [...new Set(run.answers.map((item) => item.platform_id))].sort();
   const questions = uniqueBy(run.answers, (item) => item.question_id).sort((a, b) => a.question_id.localeCompare(b.question_id));
@@ -435,7 +435,7 @@ function renderRunResult(run, monitor) {
             ${questions.map((question) => `<option value="${escapeHtml(question.question_id)}">${escapeHtml(question.question_id)}</option>`).join("")}
           </select>
         </div>
-        <div id="resultAnswerList" class="answer-list">${renderAnswerCards(run.answers, run.run_id, monitor.id)}</div>
+        <div id="resultAnswerList" class="answer-list">${renderAnswerCards(run.answers, run.run_id, monitor.id, options)}</div>
       </section>
       <section id="resultTab-citations" class="result-tab-panel hidden">
         <div class="filters compact-filters">
@@ -450,7 +450,7 @@ function renderRunResult(run, monitor) {
   `;
 }
 
-function bindRunResultControls(run, monitor) {
+function bindRunResultControls(run, monitor, options = {}) {
   document.querySelectorAll("[data-result-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll("[data-result-tab]").forEach((item) => item.classList.toggle("active", item === button));
@@ -471,12 +471,13 @@ function bindRunResultControls(run, monitor) {
       run.answers.filter((answer) => (!platform || answer.platform_id === platform) && (!question || answer.question_id === question)),
       run.run_id,
       state.currentMonitorId,
+      options,
     );
-    bindRetryAnswerButtons();
+    if (options.allowRetry !== false) bindRetryAnswerButtons();
   };
   $("answerPlatformFilter")?.addEventListener("change", renderFilteredAnswers);
   $("answerQuestionFilter")?.addEventListener("change", renderFilteredAnswers);
-  bindRetryAnswerButtons();
+  if (options.allowRetry !== false) bindRetryAnswerButtons();
   $("citationPlatformFilter")?.addEventListener("change", (event) => {
     $("citationSourceList").innerHTML = renderCitationSources(run.answers, event.target.value);
     bindCitationSourceClicks(run.answers, event.target.value);
@@ -572,10 +573,10 @@ function renderQuestionCards(answers, platform) {
     .join("");
 }
 
-function renderAnswerCards(answers, runId, monitorId) {
+function renderAnswerCards(answers, runId, monitorId, options = {}) {
   return answers.map((answer) => {
     const screenshotUrl = answer.screenshot_path ? `/runs/${encodeURIComponent(runId)}/${answer.screenshot_path}` : "";
-    const canRetry = ["failed", "partial_success", "blocked"].includes(answer.status);
+    const canRetry = options.allowRetry !== false && ["failed", "partial_success", "blocked"].includes(answer.status);
     const citationNote = answer.citation_error ? `引用信源抓取失败：${answer.citation_error}` : `引用信源：${(answer.citations || []).length} 条`;
     const answerUrl = answer.answer_url || "";
     const questionBadge = answerUrl
@@ -719,13 +720,13 @@ function renderAdminUsers(users) {
       </div>
       <div class="admin-monitor-list">
         ${(user.monitors || []).map((monitor) => `
-          <div class="admin-monitor-row">
+          <button class="admin-monitor-row clickable" type="button" data-admin-monitor-id="${escapeHtml(monitor.id)}">
             <div>
               <strong>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</strong>
               <span>${escapeHtml(monitor.status)} · 创建 ${escapeHtml(monitor.created_at)}${monitor.completed_at ? ` · 完成 ${escapeHtml(monitor.completed_at)}` : ""}</span>
             </div>
             <span class="badge">${escapeHtml(monitor.run_id || "no run")}</span>
-          </div>
+          </button>
         `).join("") || `<div class="empty-state compact">暂无监测任务</div>`}
       </div>
     </article>
@@ -733,6 +734,37 @@ function renderAdminUsers(users) {
   document.querySelectorAll("[data-admin-user]").forEach((card) => {
     card.querySelector(".admin-save-quota").addEventListener("click", () => saveUserQuota(card));
   });
+  document.querySelectorAll("[data-admin-monitor-id]").forEach((button) => {
+    button.addEventListener("click", () => loadAdminMonitorDetail(button.dataset.adminMonitorId));
+  });
+}
+
+async function loadAdminMonitorDetail(monitorId) {
+  $("adminMonitorDetail").innerHTML = `<section class="panel"><p class="panel-note">正在加载监测详情...</p></section>`;
+  try {
+    const payload = await fetchJson(`/api/admin/monitor?id=${encodeURIComponent(monitorId)}`);
+    const monitor = payload.monitor;
+    const run = payload.run;
+    const total = monitor.progress_total || 0;
+    const current = monitor.progress_current || 0;
+    $("adminMonitorDetail").innerHTML = `
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h3>${escapeHtml(monitor.brand_name)} · ${escapeHtml(monitor.intention)}</h3>
+            <p class="panel-note">${escapeHtml(monitor.status)} · ${escapeHtml(monitor.progress_message || "")}</p>
+          </div>
+          <span class="badge">${escapeHtml(monitor.run_id || "no run")}</span>
+        </div>
+        <div class="bar large"><div class="bar-fill" style="width:${total ? Math.round(current / total * 100) : 0}%"></div></div>
+        <p class="panel-note">${current}/${total}</p>
+      </section>
+      ${run ? renderRunResult(run, monitor, {allowRetry: false}) : `<section class="panel"><div class="empty-state compact">暂无可展示的运行结果</div></section>`}
+    `;
+    if (run) bindRunResultControls(run, monitor, {allowRetry: false});
+  } catch (error) {
+    $("adminMonitorDetail").innerHTML = `<section class="panel"><div class="empty-state compact">${escapeHtml(error.message)}</div></section>`;
+  }
 }
 
 async function saveUserQuota(card) {

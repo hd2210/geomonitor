@@ -1352,10 +1352,19 @@ pre {
   gap: 14px;
 }
 
+.admin-monitor-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 16px;
+}
+
 @media (max-width: 1100px) {
   .user-main,
   .report-grid,
-  .metric-strip {
+  .metric-strip,
+  .admin-monitor-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1403,10 +1412,26 @@ pre {
 }
 
 .admin-monitor-row {
+  width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
   background: #f8fafc;
+  color: var(--text);
+  text-align: left;
+}
+
+.admin-monitor-row.clickable {
+  cursor: pointer;
+}
+
+.admin-monitor-row.clickable:hover {
+  border-color: #9bb8ff;
+  background: var(--accent-weak);
+}
+
+.admin-monitor-row .badge {
+  flex: 0 0 auto;
 }
 
 .bar.large {
