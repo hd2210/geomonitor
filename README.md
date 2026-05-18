@@ -292,3 +292,206 @@ python3 -m geomonitor.cli analyze \
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. pytest -q
 node --check geomonitor/web/app.js
 ```
+
+## 服务器部署
+
+当前项目是一个 Python Web 服务，使用 SQLite 保存用户和监测任务，使用 Playwright Chromium 执行浏览器模式采集。推荐部署到 Ubuntu 22.04 / 24.04 服务器，并使用 `systemd` 常驻运行、Nginx 反向代理。
+
+### 1. 安装系统依赖
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip nginx git
+```
+
+如果需要浏览器模式采集，还需要安装 Playwright Chromium 和系统依赖：
+
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install playwright
+python3 -m playwright install --with-deps chromium
+```
+
+### 2. 上传代码
+
+示例部署目录：
+
+```bash
+cd /opt
+git clone <your-repo-url> geomonitor
+cd /opt/geomonitor
+```
+
+也可以用 `scp` / `rsync` 上传完整项目目录到 `/opt/geomonitor`。
+
+### 3. 安装 Python 依赖
+
+```bash
+cd /opt/geomonitor
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 -m playwright install chromium
+```
+
+### 4. 配置环境变量
+
+在项目根目录创建 `.env`：
+
+```bash
+cd /opt/geomonitor
+cp .env.example .env
+```
+
+编辑 `.env`，至少配置：
+
+```text
+ASTRAFLOW_API_KEY=your_api_key_here
+ASTRAFLOW_API_BASE_URL=https://api.modelverse.cn/v1/chat/completions
+ADMIN_PASSWORD=yunzhigeo
+```
+
+如服务器处在企业代理或自签证书环境，可按需配置：
+
+```text
+ASTRAFLOW_CA_BUNDLE=/path/to/company-ca-bundle.pem
+ASTRAFLOW_VERIFY_SSL=false
+```
+
+### 5. 本机测试启动
+
+```bash
+cd /opt/geomonitor
+source .venv/bin/activate
+python3 -m geomonitor.cli serve \
+  --config configs/sample_config.json \
+  --runs-dir ./data/ai_visibility_monitor/runs \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+确认服务可访问：
+
+```text
+http://服务器IP:8765/
+http://服务器IP:8765/admin
+```
+
+如果服务器安全组或防火墙没有开放 `8765`，外网可能无法直接访问。生产部署建议只监听 `127.0.0.1`，再通过 Nginx 对外提供 HTTP/HTTPS。
+
+### 6. 配置 systemd 常驻运行
+
+创建服务文件：
+
+```bash
+sudo nano /etc/systemd/system/geomonitor.service
+```
+
+写入：
+
+```ini
+[Unit]
+Description=AI Visibility Monitor
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/geomonitor
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/geomonitor/.venv/bin/python -m geomonitor.cli serve --config configs/sample_config.json --runs-dir ./data/ai_visibility_monitor/runs --host 127.0.0.1 --port 8765
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启动并设置开机自启：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable geomonitor
+sudo systemctl start geomonitor
+sudo systemctl status geomonitor
+```
+
+查看运行日志：
+
+```bash
+journalctl -u geomonitor -f
+```
+
+更新代码或配置后重启：
+
+```bash
+sudo systemctl restart geomonitor
+```
+
+### 7. 配置 Nginx 反向代理
+
+假设域名是 `geo.example.com`：
+
+```bash
+sudo nano /etc/nginx/sites-available/geomonitor
+```
+
+写入：
+
+```nginx
+server {
+    listen 80;
+    server_name geo.example.com;
+
+    client_max_body_size 50m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+启用站点：
+
+```bash
+sudo ln -s /etc/nginx/sites-available/geomonitor /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+如果要配置 HTTPS，可使用 Certbot：
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d geo.example.com
+```
+
+### 8. 浏览器登录状态准备
+
+浏览器模式依赖服务器上的 Playwright Chromium 登录状态。部署后需要为各 AI 网站执行一次登录准备：
+
+```bash
+cd /opt/geomonitor
+source .venv/bin/activate
+python3 -m geomonitor.cli login --config configs/sample_config.json --platform-id deepseek
+```
+
+也可以在 `/admin` 的 AI 网站配置中点击“准备登录”。
+
+注意：
+
+- 无桌面环境的服务器不方便手动登录网页平台，建议使用带桌面环境的服务器、VNC/远程桌面，或优先使用 API 模式。
+- 登录状态保存在 `data/browser-profiles/`，迁移服务器时可一并备份，但不同操作系统/浏览器版本下不保证完全可复用。
+- `data/app.sqlite3` 保存用户、配额和监测任务；`data/ai_visibility_monitor/runs/` 保存历史监测结果。生产环境需要定期备份这两个位置。
+
+### 9. 生产运维建议
+
+- 使用 Nginx + HTTPS 对外访问，不建议直接暴露 `8765` 端口。
+- 将 `.env`、`data/app.sqlite3`、`data/browser-profiles/` 和 `data/ai_visibility_monitor/runs/` 纳入备份。
+- 如果监测任务较多，建议增大服务器内存，并谨慎设置 `browser_concurrency`。
+- 浏览器模式在服务器上会启动真实 Chromium 进程，资源消耗明显高于 API 模式。
