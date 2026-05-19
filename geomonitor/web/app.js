@@ -8,6 +8,7 @@ const state = {
   currentMonitorId: null,
   activeMonitorId: null,
   pollTimer: null,
+  monitorListTimer: null,
   adminTab: "config",
   reportChart: null,
 };
@@ -228,19 +229,24 @@ function startMonitorPolling(monitorId) {
   if (state.pollTimer) clearInterval(state.pollTimer);
   state.activeMonitorId = monitorId;
   state.pollTimer = setInterval(async () => {
-    const payload = await fetchJson(`/api/monitor?id=${encodeURIComponent(monitorId)}`);
-    await loadMonitors({preserveDetail: true});
-    if (state.currentMonitorId === monitorId) {
-      renderMonitorUnavailable(payload.monitor);
-    }
-    if (!isActiveMonitorStatus(payload.monitor.status)) {
+    try {
+      const payload = await fetchJson(`/api/monitor?id=${encodeURIComponent(monitorId)}`);
+      await loadMonitors({preserveDetail: true});
+      if (isActiveMonitorStatus(payload.monitor.status)) {
+        if (state.currentMonitorId === monitorId) {
+          renderMonitorUnavailable(payload.monitor);
+        }
+        return;
+      }
       clearInterval(state.pollTimer);
       state.pollTimer = null;
       state.activeMonitorId = null;
-      await loadMonitors();
+      await loadMonitors({preserveDetail: true});
       if (state.currentMonitorId === monitorId || !$("monitorDetail").innerHTML.trim()) {
         await loadMonitorDetail(monitorId);
       }
+    } catch (error) {
+      console.warn("monitor polling failed", error);
     }
   }, 2000);
 }
@@ -267,6 +273,11 @@ async function loadMonitors(options = {}) {
       loadMonitorDetail(id);
     });
   });
+  updateMonitorListPolling(monitors);
+  const current = monitors.find((monitor) => Number(monitor.id) === Number(state.currentMonitorId));
+  if (options.preserveDetail && current && !isActiveMonitorStatus(current.status) && $("monitorDetail")?.querySelector(".running-panel")) {
+    await loadMonitorDetail(current.id);
+  }
   if (!options.preserveDetail && monitors.length && !state.currentMonitorId) {
     const firstCompleted = monitors.find((monitor) => !isActiveMonitorStatus(monitor.status));
     if (firstCompleted) {
@@ -276,6 +287,23 @@ async function loadMonitors(options = {}) {
       state.currentMonitorId = monitors[0].id;
       renderMonitorUnavailable(monitors[0]);
     }
+  }
+}
+
+function updateMonitorListPolling(monitors) {
+  const active = monitors.find((monitor) => isActiveMonitorStatus(monitor.status));
+  if (active && !state.monitorListTimer) {
+    state.monitorListTimer = setInterval(() => {
+      loadMonitors({preserveDetail: true}).catch((error) => console.warn("monitor list polling failed", error));
+    }, 3000);
+  }
+  if (!active && state.monitorListTimer) {
+    clearInterval(state.monitorListTimer);
+    state.monitorListTimer = null;
+  }
+  const currentActive = monitors.find((monitor) => Number(monitor.id) === Number(state.currentMonitorId) && isActiveMonitorStatus(monitor.status));
+  if (currentActive && !state.pollTimer) {
+    startMonitorPolling(currentActive.id);
   }
 }
 
