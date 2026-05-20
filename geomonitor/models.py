@@ -74,6 +74,10 @@ class AIPlatform:
     web_search: bool = True
     web_search_vendor: str | None = None
     citation_triggers: tuple[str, ...] = field(default_factory=tuple)
+    browser_mode: Literal["playwright", "cdp"] = "playwright"
+    cdp_url: str | None = None
+    chrome_path: str | None = None
+    chrome_user_data_dir: str | None = None
 
 
 @dataclass(frozen=True)

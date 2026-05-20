@@ -19,6 +19,7 @@
       "url": "https://chatgpt.com",
       "method": "browser",
       "enabled": false,
+      "browser_mode": "playwright",
       "citation_triggers": [
         "source",
         "sources",
@@ -42,6 +43,7 @@
       "url": "https://gemini.google.com/app",
       "method": "browser",
       "enabled": false,
+      "browser_mode": "playwright",
       "citation_triggers": [
         "Sources",
         "引用",
@@ -64,7 +66,8 @@
       "platform_name": "DeepSeek",
       "url": "https://chat.deepseek.com",
       "method": "browser",
-      "enabled": true,
+      "enabled": false,
+      "browser_mode": "playwright",
       "citation_triggers": [
         "个网页"
       ],
@@ -85,6 +88,9 @@
       "url": "https://www.doubao.com/chat/",
       "method": "browser",
       "enabled": true,
+      "browser_mode": "cdp",
+      "cdp_url": "http://127.0.0.1:9222",
+      "chrome_user_data_dir": "./data/cdp-profiles/doubao",
       "citation_triggers": [
         "篇资料"
       ],
@@ -105,6 +111,7 @@
       "url": "https://yuanbao.tencent.com/",
       "method": "browser",
       "enabled": true,
+      "browser_mode": "playwright",
       "citation_triggers": [
         "search-guide-tool"
       ],
@@ -125,7 +132,8 @@
       "platform_name": "通义千问",
       "url": "https://tongyi.aliyun.com/qianwen/",
       "method": "browser",
-      "enabled": true,
+      "enabled": false,
+      "browser_mode": "playwright",
       "citation_triggers": [
         "篇来源"
       ],
@@ -145,7 +153,8 @@
       "platform_name": "Kimi",
       "url": "https://www.kimi.com/",
       "method": "browser",
-      "enabled": true,
+      "enabled": false,
+      "browser_mode": "playwright",
       "citation_triggers": [
         "个结果"
       ],
@@ -166,7 +175,8 @@
       "platform_name": "文心一言",
       "url": "https://yiyan.baidu.com/",
       "method": "browser",
-      "enabled": true,
+      "enabled": false,
+      "browser_mode": "playwright",
       "citation_triggers": [
         "个网页"
       ],
@@ -231,6 +241,6 @@
     "profile_lock_wait_seconds": 60,
     "browser_concurrency": 5,
     "api_concurrency": 5,
-    "question_count": 15
+    "question_count": 2
   }
 }

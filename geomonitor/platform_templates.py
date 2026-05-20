@@ -77,6 +77,8 @@ BROWSER_PLATFORM_TEMPLATES: dict[str, dict[str, Any]] = {
         "url": "https://www.doubao.com/chat/",
         "method": "browser",
         "enabled": False,
+        "browser_mode": "cdp",
+        "cdp_url": "http://127.0.0.1:9222",
         "selectors": {
             **_generic_selectors(),
             "answer_item": "[data-testid*='message'] || [class*='message'] || [class*='answer'] || [class*='markdown']",

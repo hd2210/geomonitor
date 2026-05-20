@@ -160,6 +160,9 @@ def _parse_platforms(value: Any, forced_method: str | None = None) -> list[AIPla
         selectors = _parse_selectors(item.get("selectors", {}))
         enabled = bool(item.get("enabled", True))
         url = item.get("url")
+        browser_mode = str(item.get("browser_mode", "playwright")).strip() or "playwright"
+        if browser_mode not in {"playwright", "cdp"}:
+            raise ConfigError(f"browser_mode for {platform_id} must be playwright or cdp.")
         if method == "browser":
             if not isinstance(url, str) or not url.strip():
                 raise ConfigError(f"Browser platform {platform_id} requires url.")
@@ -182,6 +185,10 @@ def _parse_platforms(value: Any, forced_method: str | None = None) -> list[AIPla
                 web_search=bool(item.get("web_search", True)),
                 web_search_vendor=_optional_str(item, "web_search_vendor"),
                 citation_triggers=_parse_citation_triggers(item.get("citation_triggers")),
+                browser_mode=browser_mode,  # type: ignore[arg-type]
+                cdp_url=_optional_str(item, "cdp_url"),
+                chrome_path=_optional_str(item, "chrome_path"),
+                chrome_user_data_dir=_optional_str(item, "chrome_user_data_dir"),
             )
         )
     return platforms

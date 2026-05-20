@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .models import (
     AIPlatform,
@@ -171,8 +172,8 @@ class StatisticsReporter:
         page_counts: dict[tuple[str, str, str, str], int] = {}
         for answer in answers:
             for citation in answer.citations or []:
-                site = str(citation.get("site_name") or "").strip()
                 url = str(citation.get("url") or "").strip()
+                site = _site_name_from_url(url)
                 title = str(citation.get("title") or url).strip()
                 if not site or not url:
                     continue
@@ -252,6 +253,14 @@ class StatisticsReporter:
 
 def key(platform_id: str, question_id: str) -> str:
     return f"{platform_id}\0{question_id}"
+
+
+def _site_name_from_url(url: str) -> str:
+    try:
+        hostname = urlparse(url).hostname or ""
+    except Exception:
+        return ""
+    return hostname.removeprefix("www.")
 
 
 def _rate(numerator: int, denominator: int) -> float:

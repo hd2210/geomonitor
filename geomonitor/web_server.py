@@ -673,6 +673,10 @@ def _platform_to_config(platform) -> dict:
         "new_chat_url": platform.new_chat_url,
         "selectors": asdict(platform.selectors),
         "citation_triggers": list(platform.citation_triggers),
+        "browser_mode": platform.browser_mode,
+        "cdp_url": platform.cdp_url,
+        "chrome_path": platform.chrome_path,
+        "chrome_user_data_dir": platform.chrome_user_data_dir,
     }
     return {key: value for key, value in payload.items() if value not in (None, "", [])}
 
@@ -784,6 +788,14 @@ def _validate_browser_platforms(value) -> list[dict]:
             "method": "browser",
             "enabled": bool(item.get("enabled", False)),
         }
+        browser_mode = str(item.get("browser_mode", "playwright")).strip() or "playwright"
+        if browser_mode not in {"playwright", "cdp"}:
+            raise ValueError("browser_mode must be playwright or cdp.")
+        platform["browser_mode"] = browser_mode
+        for key in ("cdp_url", "chrome_path", "chrome_user_data_dir"):
+            value = str(item.get(key, "")).strip()
+            if value:
+                platform[key] = value
         citation_triggers = _validate_citation_triggers(item.get("citation_triggers"))
         if citation_triggers:
             platform["citation_triggers"] = citation_triggers

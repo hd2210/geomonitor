@@ -17,6 +17,8 @@ from .user_store import UserStore, now_iso
 
 
 SUCCESS_STATUSES = {"success", "partial_success"}
+_PLATFORM_LOCKS: dict[str, threading.Lock] = {}
+_PLATFORM_LOCKS_GUARD = threading.Lock()
 
 
 class MonitorJobManager:
@@ -359,26 +361,31 @@ class MonitorJobManager:
 
         async def run_browser_platform(platform: AIPlatform, platform_questions: list[Question]) -> None:
             async with semaphore:
-                browser_runner = AIPlatformRunner(runner_config)
-                api_runner = AstraFlowRunner(runner_config)
-                for question in platform_questions:
-                    self.store.update_monitor(
-                        monitor_id,
-                        progress_current=state["current"],
-                        progress_total=total,
-                        progress_message=f"{platform.platform_name}/{question.question_id}: 查询中",
-                    )
-                    if platform.method == "api":
-                        raw_response_path = storage.api_response_path(platform.platform_id, question.question_id)
-                        record = await api_runner.run_question(run_id, platform, question, raw_response_path)
-                    else:
-                        screenshot_path, html_path = storage.answer_paths(platform.platform_id, question.question_id)
-                        record = await browser_runner.run_question(run_id, platform, question, screenshot_path, html_path)
-                    await save_record(record)
-                    if platform.method == "api":
-                        await api_runner.random_delay()
-                    else:
-                        await browser_runner.random_delay()
+                platform_lock = _platform_lock(platform.platform_id)
+                await asyncio.to_thread(platform_lock.acquire)
+                try:
+                    browser_runner = AIPlatformRunner(runner_config)
+                    api_runner = AstraFlowRunner(runner_config)
+                    for question in platform_questions:
+                        self.store.update_monitor(
+                            monitor_id,
+                            progress_current=state["current"],
+                            progress_total=total,
+                            progress_message=f"{platform.platform_name}/{question.question_id}: 查询中",
+                        )
+                        if platform.method == "api":
+                            raw_response_path = storage.api_response_path(platform.platform_id, question.question_id)
+                            record = await api_runner.run_question(run_id, platform, question, raw_response_path)
+                        else:
+                            screenshot_path, html_path = storage.answer_paths(platform.platform_id, question.question_id)
+                            record = await browser_runner.run_question(run_id, platform, question, screenshot_path, html_path)
+                        await save_record(record)
+                        if platform.method == "api":
+                            await api_runner.random_delay()
+                        else:
+                            await browser_runner.random_delay()
+                finally:
+                    platform_lock.release()
 
         await asyncio.gather(*(run_browser_platform(platform, questions) for platform, questions in questions_by_platform.values()))
         return answers, analyses
@@ -506,3 +513,12 @@ def _retry_progress_message(runner_config, retry_pairs: list[tuple[AIPlatform, Q
     if all(platform.method == "api" for platform, _ in retry_pairs):
         return f"正在并发重试失败请求（API 并发 {max(1, runner_config.api_concurrency)}）"
     return f"正在并发重试失败请求（浏览器平台并发 {max(1, runner_config.browser_concurrency)}）"
+
+
+def _platform_lock(platform_id: str) -> threading.Lock:
+    with _PLATFORM_LOCKS_GUARD:
+        lock = _PLATFORM_LOCKS.get(platform_id)
+        if lock is None:
+            lock = threading.Lock()
+            _PLATFORM_LOCKS[platform_id] = lock
+        return lock

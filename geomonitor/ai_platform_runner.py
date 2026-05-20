@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
+import os
 import random
 import re
+import shutil
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from .models import AIPlatform, AnswerRecord, Question, RunnerConfig
 
@@ -49,6 +57,9 @@ class AIPlatformRunner:
             question=question.question,
         )
 
+        if platform.browser_mode == "cdp":
+            return await self._run_question_with_direct_cdp(platform, question, screenshot_path, html_path, base)
+
         try:
             from playwright.async_api import TimeoutError as PlaywrightTimeoutError
             from playwright.async_api import async_playwright
@@ -62,7 +73,7 @@ class AIPlatformRunner:
 
         try:
             async with async_playwright() as playwright:
-                context, page, should_close_context = await self._open_context_and_page(playwright, profile_dir)
+                context, page, should_close_context = await self._open_context_and_page(playwright, platform, profile_dir)
                 page.set_default_timeout(self.config.timeout_seconds * 1000)
                 try:
                     await page.goto(platform.url, wait_until="domcontentloaded")
@@ -131,6 +142,53 @@ class AIPlatformRunner:
             base.error_message = str(exc)
             return base
 
+    async def _run_question_with_direct_cdp(
+        self,
+        platform: AIPlatform,
+        question: Question,
+        screenshot_path: Path,
+        html_path: Path,
+        base: AnswerRecord,
+    ) -> AnswerRecord:
+        cdp_url = _normalize_cdp_url(platform.cdp_url or self.config.browser_cdp_url or "http://127.0.0.1:9222")
+        try:
+            await self._ensure_cdp_chrome(platform, cdp_url)
+            result = await asyncio.to_thread(
+                _run_direct_cdp_question,
+                cdp_url,
+                platform.url or "https://www.doubao.com/chat/",
+                question.question,
+                self.config.timeout_seconds,
+                screenshot_path,
+                html_path,
+                tuple(platform.citation_triggers or _default_citation_triggers(platform.platform_id)),
+                platform.platform_id,
+            )
+            base.answer_text = result["answer_text"]
+            base.answer_url = result["answer_url"]
+            base.raw_html_path = _relative_run_path(html_path)
+            base.screenshot_path = _relative_run_path(screenshot_path) if screenshot_path.exists() else None
+            base.citations = result.get("citations", [])
+            base.screenshot_error = result.get("screenshot_error")
+            base.citation_error = result.get("citation_error")
+            if not base.answer_text.strip():
+                base.status = "empty_answer"
+                base.error_message = "Answer container was found but extracted text was empty."
+            elif base.screenshot_error or base.citation_error:
+                base.status = "partial_success"
+            else:
+                base.status = "success"
+            return base
+        except TimeoutError as exc:
+            base.status = "timeout"
+            base.error_message = f"Response timeout after {self.config.timeout_seconds} seconds: {exc}"
+            return base
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            base.status = "blocked" if _is_blocked_exception(message) else "failed"
+            base.error_message = message
+            return base
+
     async def refresh_answer_artifacts(
         self,
         record: AnswerRecord,
@@ -172,7 +230,7 @@ class AIPlatformRunner:
 
         try:
             async with async_playwright() as playwright:
-                context, page, should_close_context = await self._open_context_and_page(playwright, profile_dir)
+                context, page, should_close_context = await self._open_context_and_page(playwright, platform, profile_dir)
                 page.set_default_timeout(self.config.timeout_seconds * 1000)
                 try:
                     await page.goto(refreshed.answer_url, wait_until="domcontentloaded")
@@ -220,9 +278,11 @@ class AIPlatformRunner:
             launch_options["executable_path"] = self.config.browser_executable_path
         return launch_options
 
-    async def _open_context_and_page(self, playwright, profile_dir: Path):
-        if self.config.browser_cdp_url:
-            browser = await playwright.chromium.connect_over_cdp(self.config.browser_cdp_url)
+    async def _open_context_and_page(self, playwright, platform: AIPlatform, profile_dir: Path):
+        if platform.browser_mode == "cdp":
+            cdp_url = _normalize_cdp_url(platform.cdp_url or self.config.browser_cdp_url or "http://127.0.0.1:9222")
+            await self._ensure_cdp_chrome(platform, cdp_url)
+            browser = await playwright.chromium.connect_over_cdp(cdp_url)
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
             page = await context.new_page()
             await page.set_viewport_size({"width": self.config.viewport_width, "height": self.config.viewport_height})
@@ -232,6 +292,45 @@ class AIPlatformRunner:
         context = await self._launch_persistent_context_with_profile_retry(playwright, launch_options)
         page = context.pages[0] if context.pages else await context.new_page()
         return context, page, True
+
+    async def _ensure_cdp_chrome(self, platform: AIPlatform, cdp_url: str) -> None:
+        if await asyncio.to_thread(_cdp_is_available, cdp_url):
+            if await asyncio.to_thread(_cdp_accepts_websocket, cdp_url):
+                return
+            await asyncio.to_thread(_terminate_cdp_process, cdp_url)
+            await asyncio.sleep(1)
+
+        chrome_path = _resolve_chrome_path(platform.chrome_path or self.config.browser_executable_path)
+        user_data_dir = _resolve_cdp_user_data_dir(platform, self.config.browser_profile_dir)
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+        port = _cdp_port(cdp_url)
+        if port is None:
+            raise RuntimeError(f"Invalid CDP URL for {platform.platform_name}: {cdp_url}")
+
+        args = [
+            chrome_path,
+            f"--remote-debugging-port={port}",
+            "--remote-allow-origins=*",
+            f"--user-data-dir={user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        if platform.url:
+            args.append(platform.url)
+        try:
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Failed to start Chrome for {platform.platform_name}. "
+                "Set Chrome path in /admin if Chrome is installed in a custom location."
+            ) from exc
+
+        deadline = asyncio.get_running_loop().time() + 15
+        while asyncio.get_running_loop().time() < deadline:
+            if await asyncio.to_thread(_cdp_is_available, cdp_url):
+                return
+            await asyncio.sleep(0.5)
+        raise RuntimeError(f"Chrome CDP endpoint was not available after launch: {cdp_url}")
 
     async def _launch_persistent_context_with_profile_retry(self, playwright, launch_options: dict):
         deadline = asyncio.get_running_loop().time() + self.config.profile_lock_wait_seconds
@@ -260,12 +359,16 @@ class AIPlatformRunner:
         profile_dir = Path(self.config.browser_profile_dir) / platform.platform_id
         profile_dir.mkdir(parents=True, exist_ok=True)
         async with async_playwright() as playwright:
-            context, page, should_close_context = await self._open_context_and_page(playwright, profile_dir)
+            context, page, should_close_context = await self._open_context_and_page(playwright, platform, profile_dir)
             try:
                 await page.goto(platform.url, wait_until="domcontentloaded")
                 print(f"Login browser opened for {platform.platform_name}. Sign in, then close the browser window.")
-                while context.pages:
-                    await asyncio.sleep(1)
+                if should_close_context:
+                    while context.pages:
+                        await asyncio.sleep(1)
+                else:
+                    while not page.is_closed():
+                        await asyncio.sleep(1)
             finally:
                 if should_close_context:
                     try:
@@ -473,6 +576,467 @@ class AIPlatformRunner:
             await self._save_html(page, html_path, record)
         except Exception:
             pass
+
+
+class _DirectCDPClient:
+    def __init__(self, websocket_url: str, timeout: int) -> None:
+        try:
+            import websocket
+        except ImportError as exc:
+            raise RuntimeError("websocket-client is required for CDP mode. Run: pip install -r requirements.txt") from exc
+        self.websocket = websocket.create_connection(websocket_url, timeout=timeout)
+        self.next_id = 0
+
+    def close(self) -> None:
+        try:
+            self.websocket.close()
+        except Exception:
+            pass
+
+    def call(self, method: str, params: dict | None = None) -> dict:
+        self.next_id += 1
+        message_id = self.next_id
+        self.websocket.send(json.dumps({"id": message_id, "method": method, "params": params or {}}))
+        while True:
+            raw = self.websocket.recv()
+            message = json.loads(raw)
+            if message.get("id") != message_id:
+                continue
+            if "error" in message:
+                error = message["error"]
+                raise RuntimeError(f"CDP {method} failed: {error.get('message') or error}")
+            return message.get("result", {})
+
+    def eval(self, expression: str, timeout_seconds: int | None = None):
+        if timeout_seconds:
+            self.websocket.settimeout(timeout_seconds)
+        try:
+            result = self.call(
+                "Runtime.evaluate",
+                {
+                    "expression": expression,
+                    "awaitPromise": True,
+                    "returnByValue": True,
+                    "timeout": (timeout_seconds or 30) * 1000,
+                },
+            )
+        finally:
+            self.websocket.settimeout(None)
+        if result.get("exceptionDetails"):
+            text = result["exceptionDetails"].get("text") or "Runtime evaluation failed"
+            raise RuntimeError(text)
+        remote = result.get("result", {})
+        return remote.get("value")
+
+
+def _run_direct_cdp_question(
+    cdp_url: str,
+    target_url: str,
+    question: str,
+    timeout_seconds: int,
+    screenshot_path: Path,
+    html_path: Path,
+    citation_triggers: tuple[str, ...],
+    platform_id: str,
+) -> dict:
+    target = _create_cdp_target(cdp_url, target_url)
+    client = _DirectCDPClient(target["webSocketDebuggerUrl"], timeout=max(timeout_seconds, 30))
+    try:
+        client.call("Page.enable")
+        client.call("Runtime.enable")
+        client.call("DOM.enable")
+        client.call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 1440, "height": 1200, "deviceScaleFactor": 1, "mobile": False},
+        )
+        client.call("Page.bringToFront")
+        client.call("Page.navigate", {"url": target_url})
+        _cdp_wait_for_ready(client, timeout_seconds)
+        _cdp_close_blocking_popups(client)
+        if platform_id == "doubao":
+            _cdp_submit_doubao_question(client, question)
+        else:
+            _cdp_submit_generic_question(client, question)
+        answer_text = _cdp_wait_for_answer(client, question, timeout_seconds)
+        answer_url = _cdp_current_url(client)
+        html = _cdp_html(client)
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text(html, encoding="utf-8")
+
+        screenshot_error = None
+        try:
+            _cdp_save_full_page_screenshot(client, screenshot_path)
+        except Exception as exc:  # noqa: BLE001
+            screenshot_error = str(exc)
+
+        citation_error = None
+        citations: list[dict[str, str]] = []
+        try:
+            citations = _cdp_extract_citations(client, citation_triggers, platform_id, answer_url)
+        except Exception as exc:  # noqa: BLE001
+            citation_error = str(exc)
+        return {
+            "answer_text": answer_text,
+            "answer_url": answer_url,
+            "screenshot_error": screenshot_error,
+            "citation_error": citation_error,
+            "citations": citations,
+        }
+    finally:
+        client.close()
+
+
+def _create_cdp_target(cdp_url: str, target_url: str) -> dict:
+    request = Request(f"{cdp_url.rstrip('/')}/json/new?{quote(target_url, safe=':/?&=%')}", method="PUT")
+    with urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _cdp_wait_for_ready(client: _DirectCDPClient, timeout_seconds: int) -> None:
+    import time
+
+    end = time.monotonic() + timeout_seconds
+    while time.monotonic() < end:
+        try:
+            state = client.eval("document.readyState")
+            if state in {"interactive", "complete"}:
+                return
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise TimeoutError("CDP page did not become ready.")
+
+
+def _cdp_close_blocking_popups(client: _DirectCDPClient) -> None:
+    client.eval(
+        """
+        (() => {
+          const words = ['稍后再说','稍后','我知道了','知道了','关闭','取消'];
+          const nodes = [...document.querySelectorAll('button,[role=button],a,div,span')];
+          for (const node of nodes) {
+            const text = (node.innerText || node.textContent || '').trim();
+            if (words.some(word => text === word || text.includes(word)) && node.offsetParent !== null) {
+              node.click();
+            }
+          }
+          return true;
+        })()
+        """
+    )
+
+
+def _cdp_submit_doubao_question(client: _DirectCDPClient, question: str) -> None:
+    payload = json.dumps(question, ensure_ascii=False)
+    point = client.eval(
+        f"""
+        (() => {{
+          const candidates = [
+            ...document.querySelectorAll('textarea'),
+            ...document.querySelectorAll('[contenteditable="true"]'),
+            ...document.querySelectorAll('.ql-editor'),
+            ...document.querySelectorAll('[data-placeholder]')
+          ].filter(el => {{
+            const rect = el.getBoundingClientRect();
+            return rect.width > 20 && rect.height > 10 && getComputedStyle(el).visibility !== 'hidden';
+          }});
+          const el = candidates[candidates.length - 1];
+          if (!el) return null;
+          el.focus();
+          if ('value' in el) {{
+            el.value = '';
+          }} else {{
+            el.textContent = '';
+          }}
+          el.dispatchEvent(new InputEvent('input', {{bubbles: true, inputType: 'deleteContentBackward', data: null}}));
+          el.dispatchEvent(new Event('change', {{bubbles: true}}));
+          const rect = el.getBoundingClientRect();
+          return {{x: rect.left + Math.min(rect.width - 8, Math.max(8, rect.width / 2)), y: rect.top + Math.min(rect.height - 8, Math.max(8, rect.height / 2))}};
+        }})()
+        """
+    )
+    if not point:
+        raise RuntimeError("Input selector was not visible in CDP page.")
+    import time
+
+    client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": point["x"], "y": point["y"]})
+    client.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1})
+    client.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1})
+    client.call("Input.insertText", {"text": question})
+    time.sleep(0.5)
+    client.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+    client.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+    time.sleep(1)
+    clicked = client.eval(
+        """
+        (() => {
+          const nodes = [...document.querySelectorAll('button,[role=button],a,div')];
+          const visible = nodes.filter(el => {
+            const rect = el.getBoundingClientRect();
+            const text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+            return rect.width > 8 && rect.height > 8 && rect.left >= 0 && rect.top >= 0 &&
+              /发送|send/i.test(text + ' ' + el.className + ' ' + el.id);
+          });
+          const el = visible[visible.length - 1];
+          if (!el) return false;
+          el.click();
+          return true;
+        })()
+        """
+    )
+    if clicked:
+        time.sleep(1)
+
+
+def _cdp_submit_generic_question(client: _DirectCDPClient, question: str) -> None:
+    _cdp_submit_doubao_question(client, question)
+
+
+def _cdp_wait_for_answer(client: _DirectCDPClient, question: str, timeout_seconds: int) -> str:
+    import time
+
+    start = time.monotonic()
+    end = start + timeout_seconds
+    last_text = ""
+    stable_rounds = 0
+    while time.monotonic() < end:
+        text = client.eval(
+            """
+            (() => {
+              const selectors = [
+                '[data-testid*="message"]',
+                '[class*="message"]',
+                '[class*="answer"]',
+                '[class*="markdown"]',
+                'main'
+              ];
+              const chunks = [];
+              for (const selector of selectors) {
+                for (const el of document.querySelectorAll(selector)) {
+                  const text = (el.innerText || '').trim();
+                  if (text && text.length > 20) chunks.push(text);
+                }
+              }
+              const unique = [...new Set(chunks)];
+              return unique.length ? unique[unique.length - 1] : (document.body.innerText || '').trim();
+            })()
+            """,
+            timeout_seconds=10,
+        ) or ""
+        if question in text and len(text) < len(question) + 80:
+            text = ""
+        generating = bool(
+            client.eval(
+                """
+                (() => /停止|生成中|思考中|正在/.test(document.body.innerText || ''))()
+                """,
+                timeout_seconds=5,
+            )
+        )
+        elapsed = time.monotonic() - start
+        if text.strip() and text == last_text:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+            last_text = text
+        if text.strip() and not generating and elapsed >= MIN_RESPONSE_SECONDS and stable_rounds >= STABLE_RESPONSE_ROUNDS:
+            return text.strip()
+        time.sleep(2)
+    if last_text.strip():
+        return last_text.strip()
+    raise TimeoutError("CDP response timeout.")
+
+
+def _cdp_current_url(client: _DirectCDPClient) -> str:
+    return client.eval("location.href") or ""
+
+
+def _cdp_html(client: _DirectCDPClient) -> str:
+    return client.eval("document.documentElement.outerHTML", timeout_seconds=10) or ""
+
+
+def _cdp_save_full_page_screenshot(client: _DirectCDPClient, screenshot_path: Path) -> None:
+    metrics = client.call("Page.getLayoutMetrics")
+    content_size = metrics.get("contentSize", {})
+    width = max(1, int(content_size.get("width") or 1440))
+    height = max(1, int(content_size.get("height") or 1200))
+    result = client.call(
+        "Page.captureScreenshot",
+        {
+            "format": "png",
+            "captureBeyondViewport": True,
+            "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
+        },
+    )
+    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+    screenshot_path.write_bytes(base64.b64decode(result["data"]))
+
+
+def _cdp_extract_citations(
+    client: _DirectCDPClient,
+    citation_triggers: tuple[str, ...],
+    platform_id: str,
+    page_url: str,
+) -> list[dict[str, str]]:
+    payload = json.dumps(list(citation_triggers), ensure_ascii=False)
+    client.eval(
+        f"""
+        (() => {{
+          const triggers = {payload};
+          const nodes = [...document.querySelectorAll('button,[role=button],a,span,div')];
+          const candidates = nodes.filter(el => {{
+            const text = (el.innerText || el.textContent || '').trim();
+            const rect = el.getBoundingClientRect();
+            return text && rect.width > 10 && rect.height > 8 && triggers.some(t => text.includes(t));
+          }});
+          const el = candidates[candidates.length - 1];
+          if (el) el.click();
+          return Boolean(el);
+        }})()
+        """,
+        timeout_seconds=10,
+    )
+    import time
+
+    time.sleep(10)
+    raw = client.eval(
+        """
+        (() => {
+          const items = [];
+          const roots = [
+            ...document.querySelectorAll('.w-full'),
+            ...document.querySelectorAll('[class*="reference"], [class*="source"], [class*="citation"]'),
+            document.body
+          ];
+          const seen = new Set();
+          for (const root of roots) {
+            for (const a of root.querySelectorAll('a[href]')) {
+              const href = a.href;
+              if (!href || seen.has(href)) continue;
+              seen.add(href);
+              const text = (a.innerText || a.textContent || '').trim();
+              const container = a.closest('li,article,[class*="item"],[class*="card"],div') || a;
+              const fullText = (container.innerText || text || '').trim();
+              items.push({
+                title: fullText.split('\\n').filter(Boolean)[0] || text || href,
+                site_name: new URL(href).hostname.replace(/^www\\./, ''),
+                url: href
+              });
+            }
+          }
+          return items;
+        })()
+        """,
+        timeout_seconds=10,
+    )
+    if not isinstance(raw, list):
+        return []
+    return _filter_platform_citations(_normalize_citations(raw), platform_id, page_url)
+
+
+def _cdp_is_available(cdp_url: str) -> bool:
+    try:
+        with urlopen(cdp_url.rstrip("/") + "/json/version", timeout=1.5) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        return False
+
+
+def _cdp_accepts_websocket(cdp_url: str) -> bool:
+    try:
+        import websocket
+
+        with urlopen(cdp_url.rstrip("/") + "/json/version", timeout=1.5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        websocket_url = payload.get("webSocketDebuggerUrl")
+        if not websocket_url:
+            return False
+        sock = websocket.create_connection(websocket_url, timeout=2)
+        sock.close()
+        return True
+    except Exception:
+        return False
+
+
+def _terminate_cdp_process(cdp_url: str) -> None:
+    port = _cdp_port(cdp_url)
+    if port is None:
+        return
+    try:
+        if os.name == "nt":
+            output = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, stderr=subprocess.DEVNULL)
+            pids: set[str] = set()
+            for line in output.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[1].endswith(f":{port}") and parts[3].upper() == "LISTENING":
+                    pids.add(parts[4])
+            for pid in pids:
+                subprocess.run(["taskkill", "/PID", pid, "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        else:
+            output = subprocess.check_output(["lsof", "-ti", f"tcp:{port}"], text=True, stderr=subprocess.DEVNULL)
+            for pid in {item.strip() for item in output.splitlines() if item.strip()}:
+                subprocess.run(["kill", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except Exception:
+        return
+
+
+def _normalize_cdp_url(cdp_url: str) -> str:
+    value = cdp_url.strip().rstrip("/")
+    if not value.startswith(("http://", "https://")):
+        value = f"http://{value}"
+    return value
+
+
+def _cdp_port(cdp_url: str) -> int | None:
+    parsed = urlparse(cdp_url)
+    if parsed.port:
+        return parsed.port
+    if parsed.scheme == "http":
+        return 80
+    if parsed.scheme == "https":
+        return 443
+    return None
+
+
+def _resolve_cdp_user_data_dir(platform: AIPlatform, browser_profile_dir: str) -> Path:
+    if platform.chrome_user_data_dir:
+        profile_dir = Path(platform.chrome_user_data_dir).expanduser()
+    else:
+        profile_root = Path(browser_profile_dir).expanduser()
+        profile_dir = profile_root.parent / "cdp-profiles" / platform.platform_id
+    if not profile_dir.is_absolute():
+        profile_dir = Path.cwd() / profile_dir
+    return profile_dir
+
+
+def _resolve_chrome_path(configured_path: str | None) -> str:
+    if configured_path:
+        return str(Path(configured_path).expanduser())
+
+    candidates: list[str | None] = []
+    if os.name == "nt":
+        candidates.extend(
+            [
+                os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            ]
+        )
+    elif sys.platform == "darwin":
+        candidates.append("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    else:
+        candidates.extend(
+            [
+                shutil.which("google-chrome"),
+                shutil.which("google-chrome-stable"),
+                shutil.which("chromium"),
+                shutil.which("chromium-browser"),
+            ]
+        )
+
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    raise RuntimeError("Google Chrome was not found. Set Chrome path in /admin for CDP browser mode.")
 
 
 async def _is_visible(page, selector: str, timeout: int) -> bool:
@@ -1844,7 +2408,7 @@ def _normalize_citations(items: list[dict[str, str]]) -> list[dict[str, str]]:
         if not url.startswith(("http://", "https://")):
             continue
         title = " ".join(str(item.get("title", "")).split()).strip() or url
-        site_name = " ".join(str(item.get("site_name", "")).split()).strip() or _site_name_from_url(url)
+        site_name = _site_name_from_url(url)
         citations.append({"title": title[:500], "site_name": site_name[:180], "url": url})
     return citations
 

@@ -619,7 +619,7 @@ function renderCitationSources(answers, platform) {
   if (!rows.length) return `<div class="empty-state compact">暂无引用信源数据</div>`;
   const sourceCounts = new Map();
   rows.forEach((row) => {
-    const key = row.site_name || hostnameFromUrl(row.url);
+    const key = hostnameFromUrl(row.url);
     sourceCounts.set(key, (sourceCounts.get(key) || 0) + 1);
   });
   return `
@@ -647,7 +647,7 @@ function bindCitationSourceClicks(answers, platform) {
 
 function renderCitationPages(rows, site) {
   const pageMap = new Map();
-  rows.filter((row) => (row.site_name || hostnameFromUrl(row.url)) === site).forEach((row) => {
+  rows.filter((row) => hostnameFromUrl(row.url) === site).forEach((row) => {
     const key = row.url;
     const current = pageMap.get(key) || {title: row.title || row.url, url: row.url, count: 0};
     current.count += 1;
@@ -665,7 +665,7 @@ function citationRows(answers, platform) {
     .flatMap((answer) => (answer.citations || []).map((citation) => ({
       platform_id: answer.platform_id,
       title: citation.title || citation.url,
-      site_name: citation.site_name || hostnameFromUrl(citation.url),
+      site_name: hostnameFromUrl(citation.url),
       url: citation.url,
     })))
     .filter((row) => row.url);
@@ -821,6 +821,10 @@ function renderAdminConfig() {
       <label><span>网站 ID</span><input class="admin-website-id" value="${escapeHtml(platform.platform_id)}"/></label>
       <label><span>网站名称</span><input class="admin-website-name" value="${escapeHtml(platform.platform_name)}"/></label>
       <label><span>访问地址</span><input class="admin-website-url" value="${escapeHtml(platform.url || "")}"/></label>
+      <label><span>浏览器模式</span><select class="admin-website-browser-mode"><option value="playwright" ${(platform.browser_mode || "playwright") === "playwright" ? "selected" : ""}>Playwright Chromium</option><option value="cdp" ${platform.browser_mode === "cdp" ? "selected" : ""}>CDP 真实 Chrome</option></select></label>
+      <label><span>CDP 地址</span><input class="admin-website-cdp-url" value="${escapeHtml(platform.cdp_url || "http://127.0.0.1:9222")}"/></label>
+      <label><span>Chrome 路径（可选）</span><input class="admin-website-chrome-path" value="${escapeHtml(platform.chrome_path || "")}" placeholder="Windows 如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"/></label>
+      <label><span>Chrome 用户数据目录（可选）</span><input class="admin-website-chrome-profile" value="${escapeHtml(platform.chrome_user_data_dir || "")}" placeholder="./data/cdp-profiles/doubao"/></label>
       <label><span>引用信源标识（每行一个）</span><textarea class="admin-website-citations" rows="4" placeholder="例如：引用&#10;来源">${escapeHtml((platform.citation_triggers || []).join("\n"))}</textarea></label>
       <button class="secondary-button admin-prepare-login" type="button">准备登录</button>
     </div>
@@ -856,6 +860,10 @@ function bindAdminEditors() {
     card.querySelector(".admin-website-id").addEventListener("input", (e) => platform.platform_id = e.target.value);
     card.querySelector(".admin-website-name").addEventListener("input", (e) => platform.platform_name = e.target.value);
     card.querySelector(".admin-website-url").addEventListener("input", (e) => platform.url = e.target.value);
+    card.querySelector(".admin-website-browser-mode").addEventListener("change", (e) => platform.browser_mode = e.target.value);
+    card.querySelector(".admin-website-cdp-url").addEventListener("input", (e) => platform.cdp_url = e.target.value);
+    card.querySelector(".admin-website-chrome-path").addEventListener("input", (e) => platform.chrome_path = e.target.value);
+    card.querySelector(".admin-website-chrome-profile").addEventListener("input", (e) => platform.chrome_user_data_dir = e.target.value);
     card.querySelector(".admin-website-citations").addEventListener("input", (e) => platform.citation_triggers = e.target.value.split("\n").map((item) => item.trim()).filter(Boolean));
     card.querySelector(".admin-prepare-login").addEventListener("click", () => prepareLogin(platform.platform_id));
   });

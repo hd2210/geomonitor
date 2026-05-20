@@ -7,7 +7,7 @@
 - 用户登录：手机号短信验证码登录，本地开发模式验证码固定为 `123456`，首次登录需要填写公司名称。
 - 创建 AI 监测：输入目标品牌名和消费者意图，系统按后台配置生成消费者问题，默认 15 个，用户可逐条编辑确认。
 - 平台选择：普通用户可从管理后台启用的 AI 网站中选择本次要监测的平台，至少选择一个。
-- 浏览器采集：使用 Playwright Chromium 打开 AI 网站，每个平台每个问题新开一轮对话，保存完整回答文本、HTML、页面截图和引用信源。
+- 浏览器采集：默认使用 Playwright Chromium 打开 AI 网站；豆包默认使用 Chrome DevTools Protocol 连接真实 Chrome，以复用独立 Chrome 登录态。每个平台每个问题新开一轮对话，保存完整回答文本、HTML、页面截图和引用信源。
 - API 采集：保留 AstraFlow / ModelVerse 文本生成接口模式，可开启 `web_search` 能力。
 - 竞品提取：所有回答采集完成后，调用 `gpt-5.5` 提取目标品牌别名和累计出现最多的竞品品牌，并纳入关键词统计。
 - 引用信源统计：抓取每条回答中的来源网页，按平台、媒体网站和网页 URL 统计引用次数。
@@ -117,12 +117,12 @@ http://127.0.0.1:8765/admin
 - 查询方式：`浏览器模式` 或 `接口模式`。一次监测内所有请求使用同一种方式。
 - AI 网站：配置网站 ID、名称、访问地址和是否启用。
 - 引用信源标识：每个 AI 网站可配置多行引用入口关键词，例如 `引用`、`来源`、`参考`、`篇资料`；采集时会同时判断关键词命中和元素是否可点击。
-- 登录准备：浏览器模式下点击某个平台的“准备登录”，在打开的 Playwright Chromium 中手动登录。登录状态会保存到 `data/browser-profiles/`。
+- 登录准备：浏览器模式下点击某个平台的“准备登录”，在打开的浏览器中手动登录。普通 Playwright 模式登录状态保存到 `data/browser-profiles/`；CDP 模式会自动启动真实 Chrome，并把登录状态保存到对应的 `chrome_user_data_dir`。
 - API 模型：接口模式下配置平台 ID、显示名称、模型 ID、API Base URL 和是否启用。
 - 并发数量：浏览器模式按平台并发、同一平台内问题串行；API 模式按请求并发。
 - 用户管理：查看所有注册用户、手机号、公司名称、注册时间、最近登录时间、监测任务列表，并修改用户可创建监测总次数。
 
-默认浏览器平台包括 ChatGPT、Gemini、DeepSeek、豆包、腾讯元宝、通义千问、Kimi、文心一言。ChatGPT / Gemini 可能因为浏览器自动化环境触发登录限制；国内 AI 平台通常可先使用 Playwright Chromium 登录态采集。
+默认浏览器平台包括 ChatGPT、Gemini、DeepSeek、豆包、腾讯元宝、通义千问、Kimi、文心一言。豆包默认配置为 `CDP 真实 Chrome` 模式；其他平台默认使用 Playwright Chromium。ChatGPT / Gemini 可能因为浏览器自动化环境触发登录限制；国内 AI 平台通常可先使用 Playwright Chromium 登录态采集。
 
 ### 2. 用户登录
 
@@ -182,7 +182,19 @@ http://127.0.0.1:8765/admin
       "url": "https://chat.deepseek.com",
       "method": "browser",
       "enabled": true,
+      "browser_mode": "playwright",
       "citation_triggers": ["个网页", "来源", "source"]
+    },
+    {
+      "platform_id": "doubao",
+      "platform_name": "豆包",
+      "url": "https://www.doubao.com/chat/",
+      "method": "browser",
+      "enabled": true,
+      "browser_mode": "cdp",
+      "cdp_url": "http://127.0.0.1:9222",
+      "chrome_user_data_dir": "./data/cdp-profiles/doubao",
+      "citation_triggers": ["篇资料"]
     }
   ],
   "api_platforms": [
@@ -213,6 +225,11 @@ http://127.0.0.1:8765/admin
 
 - `run_mode=browser` 时只使用启用的 `browser_platforms`。
 - `run_mode=api` 时只使用启用的 `api_platforms`。
+- `browser_platforms[].browser_mode` 支持 `playwright` 和 `cdp`。`playwright` 使用 Playwright 持久化 Chromium；`cdp` 会连接或自动启动真实 Chrome 的远程调试端口。
+- `browser_platforms[].cdp_url` 是 CDP 地址，默认可用 `http://127.0.0.1:9222`。
+- `browser_platforms[].chrome_user_data_dir` 是 CDP 模式的 Chrome 用户数据目录。未配置时默认使用 `data/cdp-profiles/{platform_id}`。
+- `browser_platforms[].chrome_path` 可指定 Chrome 可执行文件路径。Windows 自定义安装路径下建议在 `/admin` 填写，例如 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
+- CDP 模式启动 Chrome 时会自动加上 `--remote-debugging-port` 和 `--remote-allow-origins=*`。如果检测到同一端口已有不兼容的 Chrome 调试实例，会先关闭该端口上的旧实例再重启。
 - `runner.question_count` 控制用户输入品牌和意图后生成的问题数量，默认 15，后台页面可修改，最大 50。
 - `citation_triggers` 是浏览器模式下的引用入口标识，支持多个关键词。管理员也可以在 `/admin` 页面逐个平台维护。
 - `browser_concurrency` 控制同时运行的平台数量。
@@ -245,8 +262,8 @@ data/ai_visibility_monitor/runs/{run_id}/
 - `keyword_analysis.jsonl`：每条回答的关键词出现判断、首次位置和排名。
 - `platform_summary.csv`：平台级关键词出现率、平均排名、最佳排名。
 - `global_summary.csv`：全平台关键词出现率、平均排名、最佳排名。
-- `citation_summary.csv`：按平台和媒体网站统计引用次数。
-- `citation_pages.csv`：按平台、媒体网站和 URL 统计被引用网页次数。
+- `citation_summary.csv`：按平台和媒体网站统计引用次数；媒体网站统一由引用 URL 的域名解析得到，避免平台页面来源文案污染统计。
+- `citation_pages.csv`：按平台、媒体网站和 URL 统计被引用网页次数；媒体网站同样以 URL 域名为准。
 - `report.md`：人类可读的 Markdown 报告。
 
 ## 命令行用法
@@ -473,7 +490,7 @@ sudo certbot --nginx -d geo.example.com
 
 ### 8. 浏览器登录状态准备
 
-浏览器模式依赖服务器上的 Playwright Chromium 登录状态。部署后需要为各 AI 网站执行一次登录准备：
+浏览器模式依赖服务器上的浏览器登录状态。部署后需要为各 AI 网站执行一次登录准备：
 
 ```bash
 cd /opt/geomonitor
@@ -486,8 +503,31 @@ python3 -m geomonitor.cli login --config configs/sample_config.json --platform-i
 注意：
 
 - 无桌面环境的服务器不方便手动登录网页平台，建议使用带桌面环境的服务器、VNC/远程桌面，或优先使用 API 模式。
-- 登录状态保存在 `data/browser-profiles/`，迁移服务器时可一并备份，但不同操作系统/浏览器版本下不保证完全可复用。
+- Playwright 模式登录状态保存在 `data/browser-profiles/`；CDP 模式登录状态保存在平台配置的 `chrome_user_data_dir`，例如豆包默认 `data/cdp-profiles/doubao`。
+- CDP 模式会先尝试复用已运行的 Chrome 调试端口；如果没有运行，会自动启动 Chrome 并打开目标 AI 网站。豆包目前默认使用 CDP 模式。
 - `data/app.sqlite3` 保存用户、配额和监测任务；`data/ai_visibility_monitor/runs/` 保存历史监测结果。生产环境需要定期备份这两个位置。
+
+## Windows 部署补充
+
+Windows 可以部署本项目，适合有桌面会话的服务器或工作站。基本流程：
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+python -m geomonitor.cli serve --config configs/sample_config.json --runs-dir .\data\ai_visibility_monitor\runs --host 127.0.0.1 --port 8765
+```
+
+CDP 模式会按常见安装位置自动查找 Chrome：
+
+```text
+C:\Program Files\Google\Chrome\Application\chrome.exe
+C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
+%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe
+```
+
+如果 Chrome 安装在其他路径，请在 `/admin` 的 AI 网站配置中填写“Chrome 路径”。Windows 服务如果运行在非交互式 Session 0，通常无法弹出可操作的登录浏览器窗口；需要手动登录时，建议先在桌面会话中运行服务或使用任务计划程序以当前用户身份运行。
 
 ### 9. 生产运维建议
 
