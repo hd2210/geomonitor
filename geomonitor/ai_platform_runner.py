@@ -318,9 +318,8 @@ class AIPlatformRunner:
             f"--user-data-dir={user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
+            "about:blank",
         ]
-        if platform.url:
-            args.append(platform.url)
         try:
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as exc:  # noqa: BLE001
@@ -687,7 +686,7 @@ def _run_direct_cdp_question(
         citation_error = None
         citations: list[dict[str, str]] = []
         try:
-            citations = _cdp_extract_citations(client, citation_triggers, platform_id, answer_url)
+            citations = _cdp_extract_citations(client, cdp_url, target.get("id"), citation_triggers, platform_id, answer_url)
         except Exception as exc:  # noqa: BLE001
             citation_error = str(exc)
         return {
@@ -717,6 +716,15 @@ def _close_cdp_target(cdp_url: str, target: dict) -> None:
             return
     except Exception:
         return
+
+
+def _list_cdp_targets(cdp_url: str) -> list[dict]:
+    try:
+        with urlopen(cdp_url.rstrip("/") + "/json/list", timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            return payload if isinstance(payload, list) else []
+    except Exception:
+        return []
 
 
 def _cdp_wait_for_ready(client: _DirectCDPClient, timeout_seconds: int) -> None:
@@ -850,7 +858,11 @@ def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None
         """
     )
     if not point:
-        raise RuntimeError("Input selector was not visible in Wenxin CDP page.")
+        diagnostics = _cdp_wenxin_input_diagnostics(client)
+        blocked_marker = _blocked_text_match(diagnostics)
+        if blocked_marker:
+            raise RuntimeError(f"Blocked: {blocked_marker}")
+        raise RuntimeError(f"Wenxin CDP input was not visible. {diagnostics}")
 
     client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": point["x"], "y": point["y"]})
     client.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1})
@@ -935,7 +947,11 @@ def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None
     if not input_state or not input_state.get("ok"):
         reason = input_state.get("reason") if isinstance(input_state, dict) else "unknown"
         text = input_state.get("text") if isinstance(input_state, dict) else ""
-        raise RuntimeError(f"Wenxin input did not accept text before submit: {reason}, current={text[:80]!r}")
+        diagnostics = _cdp_wenxin_input_diagnostics(client)
+        blocked_marker = _blocked_text_match(diagnostics)
+        if blocked_marker:
+            raise RuntimeError(f"Blocked: {blocked_marker}")
+        raise RuntimeError(f"Wenxin input did not accept text before submit: {reason}, current={text[:80]!r}. {diagnostics}")
 
     time.sleep(0.5)
     clicked = client.eval(
@@ -967,6 +983,68 @@ def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None
     if not clicked:
         raise RuntimeError("Wenxin send button was not enabled after filling input.")
     time.sleep(1)
+
+
+def _cdp_wenxin_input_diagnostics(client: _DirectCDPClient) -> str:
+    try:
+        state = client.eval(
+            """
+            (() => {
+              const selectors = [
+                '[data-slate-editor="true"][contenteditable="true"]',
+                '[contenteditable="true"][role="textbox"]',
+                '[contenteditable="true"]',
+                'textarea',
+                '[role="textbox"]',
+                '[contenteditable]',
+                '[data-placeholder]',
+                '[class*="input" i]',
+                '[class*="editor" i]'
+              ];
+              const visible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 8 && rect.height > 8 &&
+                  rect.bottom > 0 && rect.right > 0 &&
+                  style.visibility !== 'hidden' && style.display !== 'none';
+              };
+              const counts = Object.fromEntries(selectors.map((selector) => [selector, document.querySelectorAll(selector).length]));
+              const visibleInputs = selectors
+                .flatMap((selector) => [...document.querySelectorAll(selector)].map((el) => ({selector, el})))
+                .filter((item) => visible(item.el))
+                .slice(0, 8)
+                .map((item) => {
+                  const rect = item.el.getBoundingClientRect();
+                  return {
+                    selector: item.selector,
+                    tag: item.el.tagName.toLowerCase(),
+                    role: item.el.getAttribute('role') || '',
+                    contenteditable: item.el.getAttribute('contenteditable') || '',
+                    placeholder: item.el.getAttribute('placeholder') || item.el.getAttribute('data-placeholder') || '',
+                    text: (item.el.innerText || item.el.textContent || item.el.value || '').replace(/\\s+/g, ' ').trim().slice(0, 80),
+                    box: `${Math.round(rect.width)}x${Math.round(rect.height)}@${Math.round(rect.left)},${Math.round(rect.top)}`
+                  };
+                });
+              return {
+                url: location.href,
+                title: document.title,
+                counts,
+                visibleInputs,
+                bodyText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 500)
+              };
+            })()
+            """,
+            timeout_seconds=10,
+        )
+        if not isinstance(state, dict):
+            return "diagnostics unavailable."
+        visible_inputs = state.get("visibleInputs") if isinstance(state.get("visibleInputs"), list) else []
+        return (
+            f"url={state.get('url')}; title={state.get('title')}; "
+            f"visible_inputs={visible_inputs}; body={str(state.get('bodyText') or '')[:300]}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"diagnostics error: {exc}"
 
 
 def _cdp_wait_for_answer(client: _DirectCDPClient, question: str, timeout_seconds: int) -> str:
@@ -1051,6 +1129,8 @@ def _cdp_save_full_page_screenshot(client: _DirectCDPClient, screenshot_path: Pa
 
 def _cdp_extract_citations(
     client: _DirectCDPClient,
+    cdp_url: str,
+    target_id: str | None,
     citation_triggers: tuple[str, ...],
     platform_id: str,
     page_url: str,
@@ -1107,8 +1187,122 @@ def _cdp_extract_citations(
         timeout_seconds=10,
     )
     if not isinstance(raw, list):
-        return []
+        raw = []
+    if platform_id == "wenxin":
+        raw = [*raw, *_cdp_collect_wenxin_citations_by_clicking_cards(client, cdp_url, target_id, page_url)]
     return _filter_platform_citations(_normalize_citations(raw), platform_id, page_url)
+
+
+def _cdp_collect_wenxin_citations_by_clicking_cards(
+    client: _DirectCDPClient,
+    cdp_url: str,
+    target_id: str | None,
+    original_url: str,
+) -> list[dict[str, str]]:
+    import time
+
+    candidates = client.eval(
+        """
+        (() => {
+          const visible = (el) => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 &&
+              rect.width >= 180 && rect.height >= 60 && rect.left >= window.innerWidth * 0.45 &&
+              rect.bottom > 0 && rect.top < window.innerHeight;
+          };
+          const textOf = (el) => (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+          const roots = Array.from(document.querySelectorAll('[class*="SourcesViewer"], [class*="webListContainer"]'))
+            .filter((el) => {
+              const rect = el.getBoundingClientRect();
+              return rect.left >= window.innerWidth * 0.45 && rect.width >= 240;
+            });
+          const root = roots.sort((a, b) => b.getBoundingClientRect().width * b.getBoundingClientRect().height - a.getBoundingClientRect().width * a.getBoundingClientRect().height)[0] || document.body;
+          const cards = Array.from(root.querySelectorAll('[class^="item__"], [class*=" item__"], [class*="item__"], li, article, section'))
+            .filter(visible)
+            .map((el) => {
+              const rect = el.getBoundingClientRect();
+              const text = textOf(el);
+              return {el, text, area: rect.width * rect.height, top: rect.top, left: rect.left, width: rect.width, height: rect.height};
+            })
+            .filter((item) => item.text.length >= 20 && /\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|搜狗|百度|搜狐|网易|新浪|腾讯|凤凰|今日头条|百家号|知乎|什么值得买|太平洋|中关村/.test(item.text))
+            .sort((a, b) => a.top - b.top || b.area - a.area);
+          const selected = [];
+          for (const item of cards) {
+            if (selected.some((other) => other.el.contains(item.el) || item.el.contains(other.el))) continue;
+            selected.push(item);
+            if (selected.length >= 12) break;
+          }
+          return selected.map((item, index) => ({
+            index,
+            text: item.text,
+            x: Math.round(item.left + item.width * 0.5),
+            y: Math.round(item.top + item.height * 0.5),
+            width: Math.round(item.width),
+            height: Math.round(item.height)
+          }));
+        })()
+        """,
+        timeout_seconds=10,
+    )
+    if not isinstance(candidates, list):
+        return []
+
+    items: list[dict[str, str]] = []
+    for candidate in candidates[:8]:
+        if not isinstance(candidate, dict):
+            continue
+        text = str(candidate.get("text") or "")
+        title, site_name = _parse_wenxin_card_text(text)
+        before_ids = {str(item.get("id")) for item in _list_cdp_targets(cdp_url)}
+        x = float(candidate.get("x") or 0)
+        y = float(candidate.get("y") or 0)
+        if x <= 0 or y <= 0:
+            continue
+        client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        client.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1})
+        client.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1})
+        url = _cdp_wait_for_wenxin_clicked_url(client, cdp_url, target_id, before_ids, original_url)
+        if _is_external_citation_url(url, "wenxin"):
+            items.append({"title": title or url, "site_name": site_name or _site_name_from_url(url), "url": url})
+        current_url = _cdp_current_url(client)
+        if current_url != original_url:
+            try:
+                client.call("Page.navigate", {"url": original_url})
+                _cdp_wait_for_ready(client, 20)
+                time.sleep(1)
+            except Exception:
+                pass
+        time.sleep(0.5)
+    return _dedupe_citation_items(items)
+
+
+def _cdp_wait_for_wenxin_clicked_url(
+    client: _DirectCDPClient,
+    cdp_url: str,
+    target_id: str | None,
+    before_ids: set[str],
+    original_url: str,
+) -> str:
+    import time
+
+    deadline = time.monotonic() + 6
+    last_external = ""
+    while time.monotonic() < deadline:
+        current_url = _cdp_current_url(client)
+        if _is_external_citation_url(current_url, "wenxin") and not _same_url_without_fragment(current_url, original_url):
+            return current_url
+        for target in _list_cdp_targets(cdp_url):
+            opened_id = str(target.get("id") or "")
+            if not opened_id or opened_id == str(target_id or "") or opened_id in before_ids:
+                continue
+            url = str(target.get("url") or "")
+            if _is_external_citation_url(url, "wenxin"):
+                last_external = url
+                _close_cdp_target(cdp_url, target)
+                return last_external
+        time.sleep(0.3)
+    return last_external
 
 
 def _cdp_is_available(cdp_url: str) -> bool:
@@ -2660,7 +2854,7 @@ def _blocked_text_match(text: str) -> str | None:
 
 def _is_blocked_exception(message: str) -> bool:
     normalized = message.casefold()
-    return "blocked:" in normalized or "blocking popup" in normalized or "input selector was not visible" in normalized
+    return "blocked:" in normalized or "blocking popup" in normalized
 
 
 def _is_profile_in_use_error(message: str) -> bool:

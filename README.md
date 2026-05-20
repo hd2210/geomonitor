@@ -247,8 +247,9 @@ http://127.0.0.1:8765/admin
 - `browser_platforms[].accounts` 可为同一 AI 网站配置多个登录账号。浏览器监测会在同一平台内按问题轮换启用账号，结果仍按平台统计；每条回答会记录实际使用的 `account_id`，便于排查。
 - 多账号 CDP 建议每个账号使用独立 `cdp_url` 端口和独立 `chrome_user_data_dir`，例如 `9222/account-a`、`9223/account-b`。某账号出现 `blocked` 或 `login_required` 后，本轮后续问题会跳过该账号，管理员可在 `/admin` 查看账号状态、重新准备登录并清除状态。
 - `browser_platforms[].chrome_path` 可指定 Chrome 可执行文件路径。Windows 自定义安装路径下建议在 `/admin` 填写，例如 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
-- CDP 模式启动 Chrome 时会自动加上 `--remote-debugging-port` 和 `--remote-allow-origins=*`。如果检测到同一端口已有不兼容的 Chrome 调试实例，会先关闭该端口上的旧实例再重启。
-- 文心一言 CDP 模式会用真实键盘清空和输入，并在提交前确认编辑器内容与发送按钮状态；如果发送按钮未激活，会记录明确错误，避免连续回车触发“你没有输入内容哦”提示。
+- CDP 模式启动 Chrome 时会自动加上 `--remote-debugging-port` 和 `--remote-allow-origins=*`，并只打开空白页；监测任务会通过 CDP 单独创建工作页签，避免额外残留平台首页页签。如果检测到同一端口已有不兼容的 Chrome 调试实例，会先关闭该端口上的旧实例再重启。
+- 文心一言 CDP 模式会用真实键盘清空和输入，并在提交前确认编辑器内容与发送按钮状态；如果发送按钮未激活或输入框未匹配，会记录页面诊断。只有检测到明确的人机验证/风控文案时才标记为 `blocked`。
+- 文心一言 CDP 模式打开引用列表后会逐个点击引用卡片，通过新标签或当前页跳转捕获真实外部 URL。
 - `runner.question_count` 控制用户输入品牌和意图后生成的问题数量，默认 15，后台页面可修改，最大 50。
 - `citation_triggers` 是浏览器模式下的引用入口标识，支持多个关键词。管理员也可以在 `/admin` 页面逐个平台维护。
 - `browser_concurrency` 控制同时运行的平台数量。

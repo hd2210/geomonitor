@@ -87,7 +87,7 @@
       "platform_name": "豆包",
       "url": "https://www.doubao.com/chat/",
       "method": "browser",
-      "enabled": false,
+      "enabled": true,
       "browser_mode": "cdp",
       "cdp_url": "http://127.0.0.1:9222",
       "chrome_user_data_dir": "./data/cdp-profiles/doubao",
