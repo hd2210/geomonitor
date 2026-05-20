@@ -11,6 +11,7 @@ const state = {
   monitorListTimer: null,
   adminTab: "config",
   reportChart: null,
+  accountStatuses: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -607,10 +608,11 @@ function renderAnswerCards(answers, runId, monitorId, options = {}) {
     const canRetry = options.allowRetry !== false && ["failed", "partial_success", "blocked"].includes(answer.status);
     const citationNote = answer.citation_error ? `引用信源抓取失败：${answer.citation_error}` : `引用信源：${(answer.citations || []).length} 条`;
     const answerUrl = answer.answer_url || "";
+    const accountBadge = answer.account_id ? `<span class="badge">${escapeHtml(answer.account_name || answer.account_id)}</span>` : "";
     const questionBadge = answerUrl
       ? `<a class="badge question-link" href="${escapeHtml(answerUrl)}" target="_blank" rel="noreferrer" title="打开回答">${escapeHtml(answer.question_id)}</a>`
       : `<span class="badge">${escapeHtml(answer.question_id)}</span>`;
-    return `<div class="answer-card"><div><div class="badge-row"><span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span><span class="badge">${escapeHtml(answer.platform_id)}</span>${questionBadge}</div><strong>${escapeHtml(answer.question)}</strong><p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "", 220))}</p><p class="panel-note">${escapeHtml(citationNote)}</p></div><div class="answer-actions">${screenshotUrl ? `<a class="answer-action" href="${escapeHtml(screenshotUrl)}" target="_blank" rel="noreferrer">查看截图</a>` : ""}${canRetry ? `<button class="answer-action retry-answer" data-monitor-id="${escapeHtml(monitorId)}" data-platform-id="${escapeHtml(answer.platform_id)}" data-question-id="${escapeHtml(answer.question_id)}">单条重试</button>` : ""}</div></div>`;
+    return `<div class="answer-card"><div><div class="badge-row"><span class="badge ${escapeHtml(answer.status)}">${escapeHtml(answer.status)}</span><span class="badge">${escapeHtml(answer.platform_id)}</span>${accountBadge}${questionBadge}</div><strong>${escapeHtml(answer.question)}</strong><p>${escapeHtml(answer.error_message || truncate(answer.answer_text || "", 220))}</p><p class="panel-note">${escapeHtml(citationNote)}</p></div><div class="answer-actions">${screenshotUrl ? `<a class="answer-action" href="${escapeHtml(screenshotUrl)}" target="_blank" rel="noreferrer">查看截图</a>` : ""}${canRetry ? `<button class="answer-action retry-answer" data-monitor-id="${escapeHtml(monitorId)}" data-platform-id="${escapeHtml(answer.platform_id)}" data-question-id="${escapeHtml(answer.question_id)}">单条重试</button>` : ""}</div></div>`;
   }).join("");
 }
 
@@ -702,7 +704,13 @@ function setUserView(view) {
 
 async function loadAdminConfig() {
   state.config = await fetchJson("/api/admin/config");
+  await loadAdminAccountStatuses();
   renderAdminConfig();
+}
+
+async function loadAdminAccountStatuses() {
+  const payload = await fetchJson("/api/admin/account-statuses");
+  state.accountStatuses = payload.accounts || [];
 }
 
 async function loadAdminUsers() {
@@ -816,18 +824,44 @@ function renderAdminConfig() {
   $("adminBrowserPanel").classList.toggle("hidden", (state.config.run_mode || "browser") !== "browser");
   $("adminApiPanel").classList.toggle("hidden", state.config.run_mode !== "api");
   $("adminWebsites").innerHTML = state.config.browser_platforms.map((platform, index) => `
-    <div class="config-card" data-admin-website="${index}">
-      <label class="checkbox-field"><input class="admin-website-enabled" type="checkbox" ${platform.enabled !== false ? "checked" : ""}/> <span>启用</span></label>
-      <label><span>网站 ID</span><input class="admin-website-id" value="${escapeHtml(platform.platform_id)}"/></label>
-      <label><span>网站名称</span><input class="admin-website-name" value="${escapeHtml(platform.platform_name)}"/></label>
-      <label><span>访问地址</span><input class="admin-website-url" value="${escapeHtml(platform.url || "")}"/></label>
-      <label><span>浏览器模式</span><select class="admin-website-browser-mode"><option value="playwright" ${(platform.browser_mode || "playwright") === "playwright" ? "selected" : ""}>Playwright Chromium</option><option value="cdp" ${platform.browser_mode === "cdp" ? "selected" : ""}>CDP 真实 Chrome</option></select></label>
-      <label><span>CDP 地址</span><input class="admin-website-cdp-url" value="${escapeHtml(platform.cdp_url || "http://127.0.0.1:9222")}"/></label>
-      <label><span>Chrome 路径（可选）</span><input class="admin-website-chrome-path" value="${escapeHtml(platform.chrome_path || "")}" placeholder="Windows 如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"/></label>
-      <label><span>Chrome 用户数据目录（可选）</span><input class="admin-website-chrome-profile" value="${escapeHtml(platform.chrome_user_data_dir || "")}" placeholder="./data/cdp-profiles/doubao"/></label>
-      <label><span>引用信源标识（每行一个）</span><textarea class="admin-website-citations" rows="4" placeholder="例如：引用&#10;来源">${escapeHtml((platform.citation_triggers || []).join("\n"))}</textarea></label>
-      <button class="secondary-button admin-prepare-login" type="button">准备登录</button>
-    </div>
+    <section class="platform-config-card" data-admin-website="${index}">
+      <header class="platform-config-head">
+        <div>
+          <strong>${escapeHtml(platform.platform_name || platform.platform_id)}</strong>
+          <span>${escapeHtml(platform.platform_id)} · ${(platform.browser_mode || "playwright") === "cdp" ? "CDP 真实 Chrome" : "Playwright Chromium"}</span>
+        </div>
+        <div class="platform-config-actions">
+          <label class="checkbox-field"><input class="admin-website-enabled" type="checkbox" ${platform.enabled !== false ? "checked" : ""}/> <span>启用</span></label>
+          <button class="secondary-button admin-prepare-login" type="button">平台登录</button>
+        </div>
+      </header>
+      <section class="platform-config-section">
+        <div class="section-title-row">
+          <strong>基础配置</strong>
+          <span>平台级配置用于默认登录态和无账号池时的 CDP 连接。</span>
+        </div>
+        <div class="platform-field-grid">
+          <label><span>网站 ID</span><input class="admin-website-id" value="${escapeHtml(platform.platform_id)}"/></label>
+          <label><span>网站名称</span><input class="admin-website-name" value="${escapeHtml(platform.platform_name)}"/></label>
+          <label class="wide-field"><span>访问地址</span><input class="admin-website-url" value="${escapeHtml(platform.url || "")}"/></label>
+          <label><span>浏览器模式</span><select class="admin-website-browser-mode"><option value="playwright" ${(platform.browser_mode || "playwright") === "playwright" ? "selected" : ""}>Playwright Chromium</option><option value="cdp" ${platform.browser_mode === "cdp" ? "selected" : ""}>CDP 真实 Chrome</option></select></label>
+          <label><span>CDP 地址</span><input class="admin-website-cdp-url" value="${escapeHtml(platform.cdp_url || "http://127.0.0.1:9222")}"/></label>
+          <label class="wide-field"><span>Chrome 路径（可选）</span><input class="admin-website-chrome-path" value="${escapeHtml(platform.chrome_path || "")}" placeholder="Windows 如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"/></label>
+          <label class="wide-field"><span>Chrome 用户数据目录（可选）</span><input class="admin-website-chrome-profile" value="${escapeHtml(platform.chrome_user_data_dir || "")}" placeholder="./data/cdp-profiles/doubao"/></label>
+          <label class="wide-field"><span>引用信源标识（每行一个）</span><textarea class="admin-website-citations" rows="4" placeholder="例如：引用&#10;来源">${escapeHtml((platform.citation_triggers || []).join("\n"))}</textarea></label>
+        </div>
+      </section>
+      <section class="platform-config-section">
+        <div class="section-title-row">
+          <div>
+            <strong>账号池</strong>
+            <span>同一平台内按问题轮换账号，状态只影响当前平台。</span>
+          </div>
+          <button class="secondary-button admin-add-account" type="button">新增账号</button>
+        </div>
+        <div class="account-editor-list">${renderBrowserAccountEditors(platform, index)}</div>
+      </section>
+    </section>
   `).join("");
   $("adminModels").innerHTML = state.config.api_platforms.map((platform, index) => `
     <div class="config-card" data-admin-model="${index}">
@@ -842,6 +876,50 @@ function renderAdminConfig() {
   setAdminTab(state.adminTab || "config");
 }
 
+function renderBrowserAccountEditors(platform, platformIndex) {
+  const accounts = platform.accounts || [];
+  if (!accounts.length) return `<div class="empty-state compact">未配置账号池时会使用平台默认 CDP 配置。</div>`;
+  return accounts.map((account, accountIndex) => {
+    const status = accountStatusFor(platform.platform_id, account.account_id);
+    return `
+    <article class="account-config-row ${escapeHtml(status.status || "ready")}" data-admin-website="${platformIndex}" data-admin-account="${accountIndex}">
+      <header class="account-row-head">
+        <div>
+          <strong>${escapeHtml(account.account_name || account.account_id || `账号${accountIndex + 1}`)}</strong>
+          <span>${escapeHtml(account.account_id || "-")}</span>
+        </div>
+        <div class="account-row-status">
+          <span class="badge ${escapeHtml(status.status || "ready")}">${escapeHtml(status.status || "ready")}</span>
+          <label class="checkbox-field"><input class="admin-account-enabled" type="checkbox" ${account.enabled !== false ? "checked" : ""}/> <span>启用</span></label>
+        </div>
+      </header>
+      <div class="account-status-summary">
+        <span>最近问题：${escapeHtml(status.question_id || "-")}</span>
+        <span>最近使用：${escapeHtml(status.last_used_at || "-")}</span>
+        <span>最近成功：${escapeHtml(status.last_success_at || "-")}</span>
+        ${status.error_message ? `<strong>${escapeHtml(status.error_message)}</strong>` : ""}
+      </div>
+      <div class="account-field-grid">
+        <label><span>账号 ID</span><input class="admin-account-id" value="${escapeHtml(account.account_id || "")}"/></label>
+        <label><span>账号名称</span><input class="admin-account-name" value="${escapeHtml(account.account_name || "")}"/></label>
+        <label><span>CDP 地址</span><input class="admin-account-cdp-url" value="${escapeHtml(account.cdp_url || "")}" placeholder="http://127.0.0.1:9222"/></label>
+        <label><span>Chrome 路径</span><input class="admin-account-chrome-path" value="${escapeHtml(account.chrome_path || "")}"/></label>
+        <label class="wide-field"><span>用户数据目录</span><input class="admin-account-profile" value="${escapeHtml(account.chrome_user_data_dir || "")}" placeholder="./data/cdp-profiles/${escapeHtml(platform.platform_id || "platform")}/${escapeHtml(account.account_id || "account")}"/></label>
+      </div>
+      <div class="account-actions">
+        <button class="secondary-button admin-prepare-login-account" type="button" data-platform-id="${escapeHtml(platform.platform_id)}" data-account-id="${escapeHtml(account.account_id)}">账号登录</button>
+        <button class="secondary-button admin-clear-account-status" type="button" data-platform-id="${escapeHtml(platform.platform_id)}" data-account-id="${escapeHtml(account.account_id)}">清除状态</button>
+        <button class="secondary-button admin-remove-account" type="button">删除账号</button>
+      </div>
+    </article>
+  `;
+  }).join("");
+}
+
+function accountStatusFor(platformId, accountId) {
+  return (state.accountStatuses || []).find((item) => item.platform_id === platformId && item.account_id === accountId) || {status: "ready"};
+}
+
 function setAdminTab(tab) {
   state.adminTab = tab;
   document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
@@ -854,7 +932,7 @@ function bindAdminEditors() {
   $("adminBrowserConcurrency").addEventListener("input", (e) => state.config.runner.browser_concurrency = Number(e.target.value || 2));
   $("adminApiConcurrency").addEventListener("input", (e) => state.config.runner.api_concurrency = Number(e.target.value || 5));
   $("adminQuestionCount").addEventListener("input", (e) => state.config.runner.question_count = Number(e.target.value || 15));
-  document.querySelectorAll("[data-admin-website]").forEach((card) => {
+  document.querySelectorAll("#adminWebsites > .platform-config-card[data-admin-website]").forEach((card) => {
     const platform = state.config.browser_platforms[Number(card.dataset.adminWebsite)];
     card.querySelector(".admin-website-enabled").addEventListener("change", (e) => platform.enabled = e.target.checked);
     card.querySelector(".admin-website-id").addEventListener("input", (e) => platform.platform_id = e.target.value);
@@ -866,6 +944,39 @@ function bindAdminEditors() {
     card.querySelector(".admin-website-chrome-profile").addEventListener("input", (e) => platform.chrome_user_data_dir = e.target.value);
     card.querySelector(".admin-website-citations").addEventListener("input", (e) => platform.citation_triggers = e.target.value.split("\n").map((item) => item.trim()).filter(Boolean));
     card.querySelector(".admin-prepare-login").addEventListener("click", () => prepareLogin(platform.platform_id));
+    card.querySelector(".admin-add-account").addEventListener("click", () => {
+      platform.accounts = platform.accounts || [];
+      const next = platform.accounts.length + 1;
+      platform.accounts.push({
+        account_id: `${platform.platform_id || "platform"}_${next}`,
+        account_name: `账号${next}`,
+        enabled: true,
+        cdp_url: "",
+        chrome_user_data_dir: `./data/cdp-profiles/${platform.platform_id || "platform"}/account-${next}`,
+      });
+      renderAdminConfig();
+    });
+  });
+  document.querySelectorAll("[data-admin-account]").forEach((row) => {
+    const platform = state.config.browser_platforms[Number(row.dataset.adminWebsite)];
+    const accountIndex = Number(row.dataset.adminAccount);
+    const account = platform.accounts[accountIndex];
+    row.querySelector(".admin-account-enabled").addEventListener("change", (e) => account.enabled = e.target.checked);
+    row.querySelector(".admin-account-id").addEventListener("input", (e) => account.account_id = e.target.value);
+    row.querySelector(".admin-account-name").addEventListener("input", (e) => account.account_name = e.target.value);
+    row.querySelector(".admin-account-cdp-url").addEventListener("input", (e) => account.cdp_url = e.target.value);
+    row.querySelector(".admin-account-chrome-path").addEventListener("input", (e) => account.chrome_path = e.target.value);
+    row.querySelector(".admin-account-profile").addEventListener("input", (e) => account.chrome_user_data_dir = e.target.value);
+    row.querySelector(".admin-remove-account").addEventListener("click", () => {
+      platform.accounts.splice(accountIndex, 1);
+      renderAdminConfig();
+    });
+  });
+  document.querySelectorAll(".admin-prepare-login-account").forEach((button) => {
+    button.addEventListener("click", () => prepareLogin(button.dataset.platformId, button.dataset.accountId));
+  });
+  document.querySelectorAll(".admin-clear-account-status").forEach((button) => {
+    button.addEventListener("click", () => clearAccountStatus(button.dataset.platformId, button.dataset.accountId));
   });
   document.querySelectorAll("[data-admin-model]").forEach((card) => {
     const platform = state.config.api_platforms[Number(card.dataset.adminModel)];
@@ -904,9 +1015,20 @@ async function saveAdminConfig() {
   }
 }
 
-async function prepareLogin(platformId) {
-  $("adminLoginLog").textContent = `正在打开 ${platformId} 登录窗口...`;
-  await fetchJson("/api/login-prepare", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({platform_id: platformId})});
+async function clearAccountStatus(platformId, accountId) {
+  await fetchJson("/api/admin/account-status/clear", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({platform_id: platformId, account_id: accountId}),
+  });
+  await loadAdminAccountStatuses();
+  renderAdminConfig();
+}
+
+async function prepareLogin(platformId, accountId = "") {
+  const label = accountId ? `${platformId}/${accountId}` : platformId;
+  $("adminLoginLog").textContent = `正在打开 ${label} 登录窗口...`;
+  await fetchJson("/api/login-prepare", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({platform_id: platformId, account_id: accountId})});
   const timer = setInterval(async () => {
     const status = await fetchJson("/api/login-status");
     $("adminLoginLog").textContent = status.lines.join("\n");

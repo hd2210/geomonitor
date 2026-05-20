@@ -1055,13 +1055,107 @@ pre {
   background: #fff;
 }
 
+.platform-config-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
+}
+
+.platform-config-head,
+.section-title-row,
+.account-row-head,
+.account-row-status,
+.account-actions,
+.platform-config-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.platform-config-head {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.platform-config-head strong,
+.account-row-head strong {
+  display: block;
+}
+
+.platform-config-head span,
+.section-title-row span,
+.account-row-head span,
+.account-status-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.platform-config-section,
+.account-editor-list {
+  display: grid;
+  gap: 12px;
+}
+
+.platform-field-grid,
+.account-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.wide-field {
+  grid-column: 1 / -1;
+}
+
+.account-config-row {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-2);
+}
+
+.account-config-row.blocked,
+.account-config-row.login_required {
+  border-color: #f0a3a3;
+  background: #fff7f7;
+}
+
+.account-status-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.account-status-summary strong {
+  width: 100%;
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .model-grid,
+.platform-config-list,
 .config-list,
 .answer-list,
 .question-list,
 .keyword-grid {
   display: grid;
   gap: 12px;
+}
+
+.platform-config-list {
+  gap: 16px;
 }
 
 .model-grid {

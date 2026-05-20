@@ -61,6 +61,16 @@ class Citation:
 
 
 @dataclass(frozen=True)
+class BrowserAccount:
+    account_id: str
+    account_name: str | None = None
+    enabled: bool = True
+    cdp_url: str | None = None
+    chrome_path: str | None = None
+    chrome_user_data_dir: str | None = None
+
+
+@dataclass(frozen=True)
 class AIPlatform:
     platform_id: str
     platform_name: str
@@ -78,6 +88,7 @@ class AIPlatform:
     cdp_url: str | None = None
     chrome_path: str | None = None
     chrome_user_data_dir: str | None = None
+    browser_accounts: tuple[BrowserAccount, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -129,6 +140,8 @@ class AnswerRecord:
     platform_name: str
     question_id: str
     question: str
+    account_id: str | None = None
+    account_name: str | None = None
     answer_text: str | None = None
     answer_url: str | None = None
     screenshot_path: str | None = None

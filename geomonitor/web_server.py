@@ -74,18 +74,21 @@ class RunJobState:
 
 
 class LoginJobState(RunJobState):
-    def start(self, config_path: Path, platform_id: str) -> None:  # type: ignore[override]
+    def start(self, config_path: Path, platform_id: str, account_id: str | None = None) -> None:  # type: ignore[override]
         with self.lock:
             if self.running:
                 raise ValueError("A login preparation browser is already open.")
             self.running = True
             self.return_code = None
-            self.lines = [f"Opening login browser for {platform_id}..."]
-        thread = threading.Thread(target=self._worker, args=(config_path, platform_id), daemon=True)
+            label = f"{platform_id}/{account_id}" if account_id else platform_id
+            self.lines = [f"Opening login browser for {label}..."]
+        thread = threading.Thread(target=self._worker, args=(config_path, platform_id, account_id), daemon=True)
         thread.start()
 
-    def _worker(self, config_path: Path, platform_id: str) -> None:  # type: ignore[override]
+    def _worker(self, config_path: Path, platform_id: str, account_id: str | None = None) -> None:  # type: ignore[override]
         command = [sys.executable, "-m", "geomonitor.cli", "login", "--config", str(config_path), "--platform-id", platform_id]
+        if account_id:
+            command.extend(["--account-id", account_id])
         process = subprocess.Popen(
             command,
             cwd=Path.cwd(),
@@ -183,6 +186,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 monitor_id = int(_single_query_value(parsed.query, "id"))
                 self._json(self._admin_monitor_payload(monitor_id))
                 return
+            if path == "/api/admin/account-statuses":
+                self._require_admin()
+                self._json({"accounts": self._account_status_payload()})
+                return
             if path == "/api/runs":
                 self._require_admin()
                 self._json(self._list_runs())
@@ -271,6 +278,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.store.update_user_quota(user_id, quota_total)
                 self._json({"status": "success", "users": self.store.list_users_with_monitors()})
                 return
+            if path == "/api/admin/account-status/clear":
+                self._require_admin()
+                payload = self._read_json_body()
+                platform_id = str(payload.get("platform_id", "")).strip()
+                account_id = str(payload.get("account_id", "")).strip()
+                if not platform_id or not account_id:
+                    raise ValueError("platform_id and account_id are required.")
+                self.store.clear_browser_account_status(platform_id, account_id)
+                self._json({"status": "success", "accounts": self._account_status_payload()})
+                return
             if path == "/api/monitor/generate-questions":
                 user = self._require_user()
                 payload = self._read_json_body()
@@ -345,10 +362,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._require_admin()
                 payload = self._read_json_body()
                 platform_id = str(payload.get("platform_id", "")).strip()
+                account_id = str(payload.get("account_id", "")).strip()
                 if not platform_id:
                     raise ValueError("platform_id is required.")
                 parse_config(_read_json_file(self.config_path))
-                self.login_state.start(self.config_path, platform_id)
+                self.login_state.start(self.config_path, platform_id, account_id or None)
                 self._json({"status": "started"})
                 return
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
@@ -501,6 +519,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "schedule": config.get("schedule"),
             "runner": config.get("runner", {}),
         }
+
+    def _account_status_payload(self) -> list[dict]:
+        config = _read_json_file(self.config_path)
+        parsed = parse_config(config)
+        statuses = {
+            (row.get("platform_id"), row.get("account_id")): row
+            for row in self.store.list_browser_account_statuses()
+        }
+        rows: list[dict] = []
+        for platform in parsed.browser_platforms:
+            for account in platform.browser_accounts:
+                status = statuses.get((platform.platform_id, account.account_id), {})
+                rows.append(
+                    {
+                        "platform_id": platform.platform_id,
+                        "platform_name": platform.platform_name,
+                        "account_id": account.account_id,
+                        "account_name": account.account_name,
+                        "enabled": account.enabled,
+                        "cdp_url": account.cdp_url or platform.cdp_url,
+                        "chrome_user_data_dir": account.chrome_user_data_dir or platform.chrome_user_data_dir,
+                        "status": status.get("status") or "ready",
+                        "run_id": status.get("run_id"),
+                        "question_id": status.get("question_id"),
+                        "error_message": status.get("error_message"),
+                        "last_used_at": status.get("last_used_at"),
+                        "last_success_at": status.get("last_success_at"),
+                        "blocked_at": status.get("blocked_at"),
+                    }
+                )
+        return rows
 
     def _save_config(self, payload: dict) -> None:
         if not isinstance(payload, dict):
@@ -677,7 +726,12 @@ def _platform_to_config(platform) -> dict:
         "cdp_url": platform.cdp_url,
         "chrome_path": platform.chrome_path,
         "chrome_user_data_dir": platform.chrome_user_data_dir,
+        "accounts": [_compact_dict(asdict(account)) for account in platform.browser_accounts],
     }
+    return {key: value for key, value in payload.items() if value not in (None, "", [])}
+
+
+def _compact_dict(payload: dict) -> dict:
     return {key: value for key, value in payload.items() if value not in (None, "", [])}
 
 
@@ -796,6 +850,9 @@ def _validate_browser_platforms(value) -> list[dict]:
             value = str(item.get(key, "")).strip()
             if value:
                 platform[key] = value
+        accounts = _validate_browser_accounts(item.get("accounts"), platform_id)
+        if accounts:
+            platform["accounts"] = accounts
         citation_triggers = _validate_citation_triggers(item.get("citation_triggers"))
         if citation_triggers:
             platform["citation_triggers"] = citation_triggers
@@ -811,6 +868,34 @@ def _validate_browser_platforms(value) -> list[dict]:
             }
         platforms.append(platform)
     return platforms
+
+
+def _validate_browser_accounts(value, platform_id: str) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"accounts for {platform_id} must be a list.")
+    accounts: list[dict] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"Each account for {platform_id} must be an object.")
+        account_id = str(item.get("account_id", "")).strip()
+        if not account_id:
+            raise ValueError("Account ID is required.")
+        if account_id in seen:
+            raise ValueError(f"Duplicate account_id for {platform_id}: {account_id}")
+        seen.add(account_id)
+        account: dict[str, object] = {
+            "account_id": account_id,
+            "enabled": bool(item.get("enabled", True)),
+        }
+        for key in ("account_name", "cdp_url", "chrome_path", "chrome_user_data_dir"):
+            text = str(item.get(key) or "").strip()
+            if text:
+                account[key] = text
+        accounts.append(account)
+    return accounts
 
 
 def _validate_citation_triggers(value) -> list[str]:

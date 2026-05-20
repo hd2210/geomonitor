@@ -6,6 +6,7 @@ from typing import Any
 
 from .models import (
     AIPlatform,
+    BrowserAccount,
     MonitorConfig,
     PlatformSelectors,
     Question,
@@ -189,9 +190,37 @@ def _parse_platforms(value: Any, forced_method: str | None = None) -> list[AIPla
                 cdp_url=_optional_str(item, "cdp_url"),
                 chrome_path=_optional_str(item, "chrome_path"),
                 chrome_user_data_dir=_optional_str(item, "chrome_user_data_dir"),
+                browser_accounts=_parse_browser_accounts(item.get("accounts"), platform_id),
             )
         )
     return platforms
+
+
+def _parse_browser_accounts(value: Any, platform_id: str) -> tuple[BrowserAccount, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError(f"accounts for {platform_id} must be a list.")
+    accounts: list[BrowserAccount] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ConfigError(f"Each account for {platform_id} must be an object.")
+        account_id = _required_str(item, "account_id")
+        if account_id in seen:
+            raise ConfigError(f"Duplicate account_id for {platform_id}: {account_id}")
+        seen.add(account_id)
+        accounts.append(
+            BrowserAccount(
+                account_id=account_id,
+                account_name=_optional_str(item, "account_name"),
+                enabled=bool(item.get("enabled", True)),
+                cdp_url=_optional_str(item, "cdp_url"),
+                chrome_path=_optional_str(item, "chrome_path"),
+                chrome_user_data_dir=_optional_str(item, "chrome_user_data_dir"),
+            )
+        )
+    return tuple(accounts)
 
 
 def _parse_citation_triggers(value: Any) -> tuple[str, ...]:

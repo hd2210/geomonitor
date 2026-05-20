@@ -87,10 +87,26 @@
       "platform_name": "豆包",
       "url": "https://www.doubao.com/chat/",
       "method": "browser",
-      "enabled": true,
+      "enabled": false,
       "browser_mode": "cdp",
       "cdp_url": "http://127.0.0.1:9222",
       "chrome_user_data_dir": "./data/cdp-profiles/doubao",
+      "accounts": [
+        {
+          "account_id": "doubao_a",
+          "enabled": true,
+          "account_name": "豆包账号A",
+          "cdp_url": "http://127.0.0.1:9222",
+          "chrome_user_data_dir": "./data/cdp-profiles/doubao/account-a"
+        },
+        {
+          "account_id": "doubao_b",
+          "enabled": true,
+          "account_name": "豆包账号B",
+          "cdp_url": "http://127.0.0.1:9223",
+          "chrome_user_data_dir": "./data/cdp-profiles/doubao/account-b"
+        }
+      ],
       "citation_triggers": [
         "篇资料"
       ],
@@ -110,7 +126,7 @@
       "platform_name": "腾讯元宝",
       "url": "https://yuanbao.tencent.com/",
       "method": "browser",
-      "enabled": true,
+      "enabled": false,
       "browser_mode": "playwright",
       "citation_triggers": [
         "search-guide-tool"
@@ -175,8 +191,17 @@
       "platform_name": "文心一言",
       "url": "https://yiyan.baidu.com/",
       "method": "browser",
-      "enabled": false,
-      "browser_mode": "playwright",
+      "enabled": true,
+      "browser_mode": "cdp",
+      "accounts": [
+        {
+          "account_id": "wenxin_1",
+          "enabled": true,
+          "account_name": "18611212664",
+          "cdp_url": "http://127.0.0.1:9224",
+          "chrome_user_data_dir": "./data/cdp-profiles/wenxin/account-1"
+        }
+      ],
       "citation_triggers": [
         "个网页"
       ],
@@ -219,6 +244,14 @@
       "model": "deepseek-ai/DeepSeek-V3.1",
       "web_search": true,
       "api_base_url": "https://api.modelverse.cn/v1/chat/completions"
+    },
+    {
+      "platform_id": "model_4",
+      "platform_name": "新模型",
+      "method": "api",
+      "enabled": true,
+      "model": "gpt-5.5",
+      "web_search": true
     }
   ],
   "schedule": {

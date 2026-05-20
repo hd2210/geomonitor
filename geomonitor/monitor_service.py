@@ -11,7 +11,7 @@ from .astraflow_runner import AstraFlowRunner
 from .config_loader import load_config
 from .keyword_analyzer import KeywordAnalyzer
 from .llm_client import AstraFlowLLMClient
-from .models import AIPlatform, AnswerRecord, KeywordAnalysisRecord, Question, TargetKeyword, make_run_id
+from .models import AIPlatform, AnswerRecord, BrowserAccount, KeywordAnalysisRecord, Question, TargetKeyword, make_run_id
 from .statistics_reporter import StatisticsReporter
 from .user_store import UserStore, now_iso
 
@@ -261,9 +261,27 @@ class MonitorJobManager:
                 )
                 return
 
+            original_keyword_analysis_text = _read_file_text(storage.keyword_analysis_path)
             retried_answers, _ = await self._collect_answer_pairs(monitor_id, run_id, [(platform, question)], storage, config.runner)
             merged_answers = _replace_answer_records(existing_answers, retried_answers)
             storage.rewrite_answers(merged_answers)
+            retried_answer = retried_answers[0] if retried_answers else None
+            if not _has_effective_new_answer(retried_answer):
+                _restore_file_text(storage.keyword_analysis_path, original_keyword_analysis_text)
+                platforms = [item for item in config.ai_platforms if item.platform_id in selected]
+                StatisticsReporter(run_id, platforms, []).write_citation_outputs(run_dir, merged_answers)
+                status_text = retried_answer.status if retried_answer else "failed"
+                self.store.update_monitor(
+                    monitor_id,
+                    status="completed",
+                    completed_at=now_iso(),
+                    progress_current=1,
+                    progress_total=1,
+                    progress_message=f"单条重试未获得新增有效回答：{status_text}，已跳过竞品重算",
+                    error_message=None,
+                    notification_message=f"模拟短信：您的 AI 监测任务 {run_id} 单条重试未获得新增有效回答。",
+                )
+                return
             platforms = [item for item in config.ai_platforms if item.platform_id in selected]
             await self._finalize_analysis(
                 monitor_id,
@@ -366,6 +384,8 @@ class MonitorJobManager:
                 try:
                     browser_runner = AIPlatformRunner(runner_config)
                     api_runner = AstraFlowRunner(runner_config)
+                    account_cursor = 0
+                    blocked_accounts = _blocked_account_ids(self.store.list_browser_account_statuses(), platform.platform_id)
                     for question in platform_questions:
                         self.store.update_monitor(
                             monitor_id,
@@ -377,8 +397,25 @@ class MonitorJobManager:
                             raw_response_path = storage.api_response_path(platform.platform_id, question.question_id)
                             record = await api_runner.run_question(run_id, platform, question, raw_response_path)
                         else:
+                            account, account_cursor = _next_browser_account(platform, blocked_accounts, account_cursor)
+                            if platform.browser_accounts and account is None:
+                                record = _no_available_account_record(run_id, platform, question)
+                                await save_record(record)
+                                continue
                             screenshot_path, html_path = storage.answer_paths(platform.platform_id, question.question_id)
-                            record = await browser_runner.run_question(run_id, platform, question, screenshot_path, html_path)
+                            record = await browser_runner.run_question(run_id, platform, question, screenshot_path, html_path, account=account)
+                            if account is not None:
+                                self.store.update_browser_account_status(
+                                    platform.platform_id,
+                                    account.account_id,
+                                    account.account_name,
+                                    record.status,
+                                    run_id,
+                                    question.question_id,
+                                    record.error_message or record.screenshot_error or record.citation_error,
+                                )
+                                if record.status in {"blocked", "login_required"}:
+                                    blocked_accounts.add(account.account_id)
                         await save_record(record)
                         if platform.method == "api":
                             await api_runner.random_delay()
@@ -452,6 +489,63 @@ def _keywords_from_competitors(brand_name: str, payload: dict[str, Any]) -> list
         if len(keywords) >= 11:
             break
     return keywords
+
+
+def _blocked_account_ids(statuses: list[dict[str, Any]], platform_id: str) -> set[str]:
+    return {
+        str(row.get("account_id") or "")
+        for row in statuses
+        if row.get("platform_id") == platform_id and row.get("status") in {"blocked", "login_required"}
+    }
+
+
+def _next_browser_account(
+    platform: AIPlatform,
+    blocked_accounts: set[str],
+    cursor: int,
+) -> tuple[BrowserAccount | None, int]:
+    accounts = [account for account in platform.browser_accounts if account.enabled]
+    if not accounts:
+        return None, cursor
+    for offset in range(len(accounts)):
+        index = (cursor + offset) % len(accounts)
+        account = accounts[index]
+        if account.account_id not in blocked_accounts:
+            return account, index + 1
+    return None, cursor
+
+
+def _no_available_account_record(run_id: str, platform: AIPlatform, question: Question) -> AnswerRecord:
+    return AnswerRecord(
+        run_id=run_id,
+        timestamp=now_iso(),
+        platform_id=platform.platform_id,
+        platform_name=platform.platform_name,
+        question_id=question.question_id,
+        question=question.question,
+        status="blocked",
+        error_message="No enabled browser account is available. All configured accounts are disabled or blocked.",
+    )
+
+
+def _has_effective_new_answer(answer: AnswerRecord | None) -> bool:
+    return bool(answer and answer.status in SUCCESS_STATUSES and (answer.answer_text or "").strip())
+
+
+def _read_file_text(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _restore_file_text(path: Path, text: str | None) -> None:
+    if text is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    path.write_text(text, encoding="utf-8")
 
 
 def _clean_aliases(value: Any, keyword: str) -> list[str]:

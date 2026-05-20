@@ -9,7 +9,7 @@ from .astraflow_runner import AstraFlowRunner
 from .answer_storage import AnswerStorage, read_raw_answers
 from .config_loader import load_config
 from .keyword_analyzer import KeywordAnalyzer
-from .models import AIPlatform, AnswerRecord, KeywordAnalysisRecord, make_run_id
+from .models import AIPlatform, AnswerRecord, BrowserAccount, KeywordAnalysisRecord, make_run_id
 from .scheduler import run_forever
 from .statistics_reporter import StatisticsReporter
 from .web_server import serve_dashboard
@@ -29,6 +29,7 @@ def main() -> None:
     login_parser = subparsers.add_parser("login", help="Open a browser profile for manual site login")
     login_parser.add_argument("--config", required=True)
     login_parser.add_argument("--platform-id", required=True)
+    login_parser.add_argument("--account-id")
 
     analyze_parser = subparsers.add_parser("analyze", help="Analyze an existing run directory")
     analyze_parser.add_argument("--config", required=True)
@@ -46,7 +47,7 @@ def main() -> None:
     elif args.command == "schedule":
         asyncio.run(schedule(args.config))
     elif args.command == "login":
-        asyncio.run(prepare_login(args.config, args.platform_id))
+        asyncio.run(prepare_login(args.config, args.platform_id, args.account_id))
     elif args.command == "analyze":
         analyze_existing(args.config, args.run_dir)
     elif args.command == "serve":
@@ -64,14 +65,15 @@ async def schedule(config_path: str) -> None:
     await run_forever(config.schedule, job)
 
 
-async def prepare_login(config_path: str, platform_id: str) -> None:
+async def prepare_login(config_path: str, platform_id: str, account_id: str | None = None) -> None:
     config = load_config(config_path)
     platforms = {platform.platform_id: platform for platform in config.browser_platforms}
     platform = platforms.get(platform_id)
     if platform is None:
         raise SystemExit(f"Browser platform not found: {platform_id}")
+    account = _find_account(platform, account_id)
     runner = AIPlatformRunner(config.runner)
-    await runner.prepare_login(platform)
+    await runner.prepare_login(platform, account)
 
 
 async def run_once(config_path: str, run_id: str | None = None) -> Path:
@@ -88,6 +90,7 @@ async def run_once(config_path: str, run_id: str | None = None) -> Path:
     analyses: list[KeywordAnalysisRecord] = []
 
     for platform_index, platform in enumerate(config.ai_platforms):
+        account_cursor = 0
         for question_index, question in enumerate(config.questions):
             print(f"[{current_run_id}] {platform.platform_id}/{question.question_id}: asking")
             if platform.method == "api":
@@ -95,7 +98,8 @@ async def run_once(config_path: str, run_id: str | None = None) -> Path:
                 record = await api_runner.run_question(current_run_id, platform, question, raw_response_path)
             else:
                 screenshot_path, html_path = storage.answer_paths(platform.platform_id, question.question_id)
-                record = await browser_runner.run_question(current_run_id, platform, question, screenshot_path, html_path)
+                account, account_cursor = _next_cli_account(platform, account_cursor)
+                record = await browser_runner.run_question(current_run_id, platform, question, screenshot_path, html_path, account=account)
             storage.write_answer(record)
             answers.append(record)
 
@@ -157,6 +161,23 @@ def _short_error(message: str, max_length: int = 180) -> str:
     if len(first_line) <= max_length:
         return first_line
     return first_line[: max_length - 3] + "..."
+
+
+def _find_account(platform: AIPlatform, account_id: str | None) -> BrowserAccount | None:
+    if not account_id:
+        return None
+    for account in platform.browser_accounts:
+        if account.account_id == account_id:
+            return account
+    raise SystemExit(f"Browser account not found for {platform.platform_id}: {account_id}")
+
+
+def _next_cli_account(platform: AIPlatform, cursor: int) -> tuple[BrowserAccount | None, int]:
+    accounts = [account for account in platform.browser_accounts if account.enabled]
+    if not accounts:
+        return None, cursor
+    index = cursor % len(accounts)
+    return accounts[index], index + 1
 
 
 if __name__ == "__main__":

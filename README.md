@@ -14,7 +14,7 @@
 - 关键词统计：支持品牌名和 alias 独立词/短语匹配，避免 `deli` 被 `remodeling` 误命中；同一回答多次出现只计一次。
 - 排名统计：优先按显式推荐列表/表格排序；没有明确列表时按首次出现位置排序。
 - 结果查看：结果页展示目标品牌提及率、竞品提及率、平均排名、各平台表现、问题列表、引用信源、回答详情和截图入口。
-- 重试机制：支持批量重试失败请求，也支持在回答详情中对 `failed` / `partial_success` 单条重试；重试后重新提取竞品和统计。
+- 重试机制：支持批量重试失败请求，也支持在回答详情中对 `failed` / `partial_success` 单条重试；单条重试只有获得新的有效回答后才重新提取竞品和统计。
 - 用户配额：普通用户右上角显示可用监控次数；管理员可在后台调整每个用户可创建监测总次数。
 - 系统管理：`/admin` 页面使用管理密码进入，配置查询方式、生成问题数量、启用 AI 网站、引用信源标识、API 模型、并发数量和用户配额。
 
@@ -115,7 +115,7 @@ http://127.0.0.1:8765/admin
 进入 `/admin`，输入管理密码后可配置：
 
 - 查询方式：`浏览器模式` 或 `接口模式`。一次监测内所有请求使用同一种方式。
-- AI 网站：配置网站 ID、名称、访问地址和是否启用。
+- AI 网站：按平台分层展示；每个平台独立维护基础配置、账号池和最近账号状态，避免不同平台的 CDP 端口、登录态目录混在一起。
 - 引用信源标识：每个 AI 网站可配置多行引用入口关键词，例如 `引用`、`来源`、`参考`、`篇资料`；采集时会同时判断关键词命中和元素是否可点击。
 - 登录准备：浏览器模式下点击某个平台的“准备登录”，在打开的浏览器中手动登录。普通 Playwright 模式登录状态保存到 `data/browser-profiles/`；CDP 模式会自动启动真实 Chrome，并把登录状态保存到对应的 `chrome_user_data_dir`。
 - API 模型：接口模式下配置平台 ID、显示名称、模型 ID、API Base URL 和是否启用。
@@ -194,6 +194,22 @@ http://127.0.0.1:8765/admin
       "browser_mode": "cdp",
       "cdp_url": "http://127.0.0.1:9222",
       "chrome_user_data_dir": "./data/cdp-profiles/doubao",
+      "accounts": [
+        {
+          "account_id": "doubao_a",
+          "account_name": "豆包账号A",
+          "enabled": true,
+          "cdp_url": "http://127.0.0.1:9222",
+          "chrome_user_data_dir": "./data/cdp-profiles/doubao/account-a"
+        },
+        {
+          "account_id": "doubao_b",
+          "account_name": "豆包账号B",
+          "enabled": true,
+          "cdp_url": "http://127.0.0.1:9223",
+          "chrome_user_data_dir": "./data/cdp-profiles/doubao/account-b"
+        }
+      ],
       "citation_triggers": ["篇资料"]
     }
   ],
@@ -228,8 +244,11 @@ http://127.0.0.1:8765/admin
 - `browser_platforms[].browser_mode` 支持 `playwright` 和 `cdp`。`playwright` 使用 Playwright 持久化 Chromium；`cdp` 会连接或自动启动真实 Chrome 的远程调试端口。
 - `browser_platforms[].cdp_url` 是 CDP 地址，默认可用 `http://127.0.0.1:9222`。
 - `browser_platforms[].chrome_user_data_dir` 是 CDP 模式的 Chrome 用户数据目录。未配置时默认使用 `data/cdp-profiles/{platform_id}`。
+- `browser_platforms[].accounts` 可为同一 AI 网站配置多个登录账号。浏览器监测会在同一平台内按问题轮换启用账号，结果仍按平台统计；每条回答会记录实际使用的 `account_id`，便于排查。
+- 多账号 CDP 建议每个账号使用独立 `cdp_url` 端口和独立 `chrome_user_data_dir`，例如 `9222/account-a`、`9223/account-b`。某账号出现 `blocked` 或 `login_required` 后，本轮后续问题会跳过该账号，管理员可在 `/admin` 查看账号状态、重新准备登录并清除状态。
 - `browser_platforms[].chrome_path` 可指定 Chrome 可执行文件路径。Windows 自定义安装路径下建议在 `/admin` 填写，例如 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
 - CDP 模式启动 Chrome 时会自动加上 `--remote-debugging-port` 和 `--remote-allow-origins=*`。如果检测到同一端口已有不兼容的 Chrome 调试实例，会先关闭该端口上的旧实例再重启。
+- 文心一言 CDP 模式会用真实键盘清空和输入，并在提交前确认编辑器内容与发送按钮状态；如果发送按钮未激活，会记录明确错误，避免连续回车触发“你没有输入内容哦”提示。
 - `runner.question_count` 控制用户输入品牌和意图后生成的问题数量，默认 15，后台页面可修改，最大 50。
 - `citation_triggers` 是浏览器模式下的引用入口标识，支持多个关键词。管理员也可以在 `/admin` 页面逐个平台维护。
 - `browser_concurrency` 控制同时运行的平台数量。
@@ -301,7 +320,7 @@ python3 -m geomonitor.cli analyze \
 - 如果有输入框但存在弹窗，会尝试关闭弹窗；无法关闭则记录 blocked。
 - 截图失败但文本保存成功时，记录为 `partial_success` 并写入 `screenshot_error`。
 - 引用信源抓取失败但正文已成功时，记录为 `partial_success` 并写入 `citation_error`。
-- 批量重试只针对失败请求；单条重试可针对 `failed` 和 `partial_success` 回答，重试会重新提问、截图、抓取引用信源，并重算竞品和统计。
+- 批量重试只针对失败请求；单条重试可针对 `failed` 和 `partial_success` 回答，重试会重新提问、截图、抓取引用信源。若本次重试没有获得 `success` / `partial_success` 且带正文的有效回答，只更新该条原始记录并跳过竞品重算。
 
 ## 开发验证
 
@@ -504,7 +523,10 @@ python3 -m geomonitor.cli login --config configs/sample_config.json --platform-i
 
 - 无桌面环境的服务器不方便手动登录网页平台，建议使用带桌面环境的服务器、VNC/远程桌面，或优先使用 API 模式。
 - Playwright 模式登录状态保存在 `data/browser-profiles/`；CDP 模式登录状态保存在平台配置的 `chrome_user_data_dir`，例如豆包默认 `data/cdp-profiles/doubao`。
+- 配置了 `accounts` 时，登录状态保存在各账号自己的 `chrome_user_data_dir`；可在 `/admin` 的账号池里逐个点击“准备登录”。
+- `/admin` 的 AI 网站配置中，平台级“准备登录”使用平台默认登录态；账号池每行的“准备登录”会打开对应 `account_id` 的独立 CDP 登录态。
 - CDP 模式会先尝试复用已运行的 Chrome 调试端口；如果没有运行，会自动启动 Chrome 并打开目标 AI 网站。豆包目前默认使用 CDP 模式。
+- CDP 模式每次查询会新建一个临时标签页，查询完成后自动关闭该标签页；Chrome 进程和登录态会保留，方便后续问题继续复用。
 - `data/app.sqlite3` 保存用户、配额和监测任务；`data/ai_visibility_monitor/runs/` 保存历史监测结果。生产环境需要定期备份这两个位置。
 
 ## Windows 部署补充

@@ -15,7 +15,7 @@ from urllib.parse import quote
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .models import AIPlatform, AnswerRecord, Question, RunnerConfig
+from .models import AIPlatform, AnswerRecord, BrowserAccount, Question, RunnerConfig
 
 
 HUMAN_VERIFICATION_TEXTS = (
@@ -46,6 +46,7 @@ class AIPlatformRunner:
         question: Question,
         screenshot_path: Path,
         html_path: Path,
+        account: BrowserAccount | None = None,
     ) -> AnswerRecord:
         timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
         base = AnswerRecord(
@@ -55,10 +56,12 @@ class AIPlatformRunner:
             platform_name=platform.platform_name,
             question_id=question.question_id,
             question=question.question,
+            account_id=account.account_id if account else None,
+            account_name=account.account_name if account else None,
         )
 
         if platform.browser_mode == "cdp":
-            return await self._run_question_with_direct_cdp(platform, question, screenshot_path, html_path, base)
+            return await self._run_question_with_direct_cdp(platform, question, screenshot_path, html_path, base, account)
 
         try:
             from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -149,10 +152,11 @@ class AIPlatformRunner:
         screenshot_path: Path,
         html_path: Path,
         base: AnswerRecord,
+        account: BrowserAccount | None = None,
     ) -> AnswerRecord:
-        cdp_url = _normalize_cdp_url(platform.cdp_url or self.config.browser_cdp_url or "http://127.0.0.1:9222")
+        cdp_url = _normalize_cdp_url((account.cdp_url if account else None) or platform.cdp_url or self.config.browser_cdp_url or "http://127.0.0.1:9222")
         try:
-            await self._ensure_cdp_chrome(platform, cdp_url)
+            await self._ensure_cdp_chrome(platform, cdp_url, account)
             result = await asyncio.to_thread(
                 _run_direct_cdp_question,
                 cdp_url,
@@ -293,15 +297,15 @@ class AIPlatformRunner:
         page = context.pages[0] if context.pages else await context.new_page()
         return context, page, True
 
-    async def _ensure_cdp_chrome(self, platform: AIPlatform, cdp_url: str) -> None:
+    async def _ensure_cdp_chrome(self, platform: AIPlatform, cdp_url: str, account: BrowserAccount | None = None) -> None:
         if await asyncio.to_thread(_cdp_is_available, cdp_url):
             if await asyncio.to_thread(_cdp_accepts_websocket, cdp_url):
                 return
             await asyncio.to_thread(_terminate_cdp_process, cdp_url)
             await asyncio.sleep(1)
 
-        chrome_path = _resolve_chrome_path(platform.chrome_path or self.config.browser_executable_path)
-        user_data_dir = _resolve_cdp_user_data_dir(platform, self.config.browser_profile_dir)
+        chrome_path = _resolve_chrome_path((account.chrome_path if account else None) or platform.chrome_path or self.config.browser_executable_path)
+        user_data_dir = _resolve_cdp_user_data_dir(platform, self.config.browser_profile_dir, account)
         user_data_dir.mkdir(parents=True, exist_ok=True)
         port = _cdp_port(cdp_url)
         if port is None:
@@ -321,7 +325,7 @@ class AIPlatformRunner:
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
-                f"Failed to start Chrome for {platform.platform_name}. "
+                f"Failed to start Chrome for {platform.platform_name}{_account_label(account)}. "
                 "Set Chrome path in /admin if Chrome is installed in a custom location."
             ) from exc
 
@@ -330,7 +334,7 @@ class AIPlatformRunner:
             if await asyncio.to_thread(_cdp_is_available, cdp_url):
                 return
             await asyncio.sleep(0.5)
-        raise RuntimeError(f"Chrome CDP endpoint was not available after launch: {cdp_url}")
+        raise RuntimeError(f"Chrome CDP endpoint was not available after launch for {platform.platform_name}{_account_label(account)}: {cdp_url}")
 
     async def _launch_persistent_context_with_profile_retry(self, playwright, launch_options: dict):
         deadline = asyncio.get_running_loop().time() + self.config.profile_lock_wait_seconds
@@ -350,7 +354,7 @@ class AIPlatformRunner:
                 await asyncio.sleep(2)
         raise RuntimeError(str(last_error))
 
-    async def prepare_login(self, platform: AIPlatform) -> None:
+    async def prepare_login(self, platform: AIPlatform, account: BrowserAccount | None = None) -> None:
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
@@ -359,10 +363,19 @@ class AIPlatformRunner:
         profile_dir = Path(self.config.browser_profile_dir) / platform.platform_id
         profile_dir.mkdir(parents=True, exist_ok=True)
         async with async_playwright() as playwright:
-            context, page, should_close_context = await self._open_context_and_page(playwright, platform, profile_dir)
+            if platform.browser_mode == "cdp" and account is not None:
+                cdp_url = _normalize_cdp_url(account.cdp_url or platform.cdp_url or self.config.browser_cdp_url or "http://127.0.0.1:9222")
+                await self._ensure_cdp_chrome(platform, cdp_url, account)
+                browser = await playwright.chromium.connect_over_cdp(cdp_url)
+                context = browser.contexts[0] if browser.contexts else await browser.new_context()
+                page = await context.new_page()
+                await page.set_viewport_size({"width": self.config.viewport_width, "height": self.config.viewport_height})
+                should_close_context = False
+            else:
+                context, page, should_close_context = await self._open_context_and_page(playwright, platform, profile_dir)
             try:
                 await page.goto(platform.url, wait_until="domcontentloaded")
-                print(f"Login browser opened for {platform.platform_name}. Sign in, then close the browser window.")
+                print(f"Login browser opened for {platform.platform_name}{_account_label(account)}. Sign in, then close the browser window.")
                 if should_close_context:
                     while context.pages:
                         await asyncio.sleep(1)
@@ -655,6 +668,8 @@ def _run_direct_cdp_question(
         _cdp_close_blocking_popups(client)
         if platform_id == "doubao":
             _cdp_submit_doubao_question(client, question)
+        elif platform_id == "wenxin":
+            _cdp_submit_wenxin_question(client, question)
         else:
             _cdp_submit_generic_question(client, question)
         answer_text = _cdp_wait_for_answer(client, question, timeout_seconds)
@@ -684,12 +699,24 @@ def _run_direct_cdp_question(
         }
     finally:
         client.close()
+        _close_cdp_target(cdp_url, target)
 
 
 def _create_cdp_target(cdp_url: str, target_url: str) -> dict:
     request = Request(f"{cdp_url.rstrip('/')}/json/new?{quote(target_url, safe=':/?&=%')}", method="PUT")
     with urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _close_cdp_target(cdp_url: str, target: dict) -> None:
+    target_id = target.get("id")
+    if not target_id:
+        return
+    try:
+        with urlopen(f"{cdp_url.rstrip('/')}/json/close/{quote(str(target_id), safe='')}", timeout=5):
+            return
+    except Exception:
+        return
 
 
 def _cdp_wait_for_ready(client: _DirectCDPClient, timeout_seconds: int) -> None:
@@ -789,6 +816,157 @@ def _cdp_submit_doubao_question(client: _DirectCDPClient, question: str) -> None
 
 def _cdp_submit_generic_question(client: _DirectCDPClient, question: str) -> None:
     _cdp_submit_doubao_question(client, question)
+
+
+def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None:
+    import time
+
+    quoted_question = json.dumps(question)
+    point = client.eval(
+        """
+        (() => {
+          const selectors = [
+            '[data-slate-editor="true"][contenteditable="true"]',
+            '[contenteditable="true"][role="textbox"]',
+            '[contenteditable="true"]',
+            'textarea',
+            '[role="textbox"]'
+          ];
+          const visible = (el) => {
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            return rect.width > 20 && rect.height > 10 &&
+              rect.bottom > 0 && rect.right > 0 &&
+              style.visibility !== 'hidden' && style.display !== 'none';
+          };
+          const candidates = selectors.flatMap((selector) => [...document.querySelectorAll(selector)]).filter(visible);
+          const el = candidates[candidates.length - 1];
+          if (!el) return null;
+          el.scrollIntoView({block: 'center', inline: 'center'});
+          el.focus();
+          const rect = el.getBoundingClientRect();
+          return {x: rect.left + Math.min(rect.width - 8, Math.max(8, rect.width / 2)), y: rect.top + Math.min(rect.height - 8, Math.max(8, rect.height / 2))};
+        })()
+        """
+    )
+    if not point:
+        raise RuntimeError("Input selector was not visible in Wenxin CDP page.")
+
+    client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": point["x"], "y": point["y"]})
+    client.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1})
+    client.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1})
+    client.eval(
+        """
+        (() => {
+          const el = document.activeElement;
+          if (!el) return;
+          if ('value' in el && typeof el.select === 'function') {
+            el.select();
+            return;
+          }
+          const selection = window.getSelection();
+          if (!selection) return;
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        })()
+        """
+    )
+    client.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8})
+    client.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8})
+    client.call("Input.insertText", {"text": question})
+    time.sleep(0.7)
+    input_state = client.eval(
+        f"""
+        (() => {{
+          const question = {quoted_question};
+          const selectors = [
+            '[data-slate-editor="true"][contenteditable="true"]',
+            '[contenteditable="true"][role="textbox"]',
+            '[contenteditable="true"]',
+            'textarea',
+            '[role="textbox"]'
+          ];
+          const visible = (el) => {{
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            return rect.width > 20 && rect.height > 10 &&
+              rect.bottom > 0 && rect.right > 0 &&
+              style.visibility !== 'hidden' && style.display !== 'none';
+          }};
+          const textOf = (el) => ('value' in el ? el.value : (el.innerText || el.textContent || '')).trim();
+          const candidates = selectors.flatMap((selector) => [...document.querySelectorAll(selector)]).filter(visible);
+          const el = candidates[candidates.length - 1];
+          if (!el) return {{ok: false, text: '', reason: 'missing-input'}};
+          let text = textOf(el);
+          if (text.includes(question)) return {{ok: true, text, reason: 'insertText'}};
+
+          el.focus();
+          const selection = window.getSelection();
+          if (selection && !('value' in el)) {{
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }}
+          try {{
+            const data = new DataTransfer();
+            data.setData('text/plain', question);
+            const pasteEvent = new ClipboardEvent('paste', {{
+              bubbles: true,
+              cancelable: true,
+              clipboardData: data
+            }});
+            el.dispatchEvent(pasteEvent);
+          }} catch (error) {{
+            document.execCommand('insertText', false, question);
+          }}
+          text = textOf(el);
+          if (!text.includes(question)) {{
+            document.execCommand('insertText', false, question);
+            text = textOf(el);
+          }}
+          return {{ok: text.includes(question), text, reason: 'paste-fallback'}};
+        }})()
+        """
+    )
+    if not input_state or not input_state.get("ok"):
+        reason = input_state.get("reason") if isinstance(input_state, dict) else "unknown"
+        text = input_state.get("text") if isinstance(input_state, dict) else ""
+        raise RuntimeError(f"Wenxin input did not accept text before submit: {reason}, current={text[:80]!r}")
+
+    time.sleep(0.5)
+    clicked = client.eval(
+        """
+        (() => {
+          const nodes = [...document.querySelectorAll('button,[role=button],a,div,span')];
+          const candidates = nodes.filter((el) => {
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+            const name = `${el.className || ''} ${el.id || ''}`;
+            const ariaDisabled = el.getAttribute('aria-disabled') === 'true';
+            const disabled = Boolean(el.disabled) || el.hasAttribute('disabled');
+            return rect.width > 8 && rect.height > 8 &&
+              style.visibility !== 'hidden' && style.display !== 'none' &&
+              style.pointerEvents !== 'none' &&
+              Number(style.opacity || 1) > 0.2 &&
+              !disabled && !ariaDisabled &&
+              !/disabled|disable|inactive/.test(name.toLowerCase()) &&
+              (/发送|send/i.test(text) || /send/i.test(name));
+          });
+          const el = candidates[candidates.length - 1];
+          if (!el) return false;
+          el.click();
+          return true;
+        })()
+        """
+    )
+    if not clicked:
+        raise RuntimeError("Wenxin send button was not enabled after filling input.")
+    time.sleep(1)
 
 
 def _cdp_wait_for_answer(client: _DirectCDPClient, question: str, timeout_seconds: int) -> str:
@@ -997,15 +1175,27 @@ def _cdp_port(cdp_url: str) -> int | None:
     return None
 
 
-def _resolve_cdp_user_data_dir(platform: AIPlatform, browser_profile_dir: str) -> Path:
-    if platform.chrome_user_data_dir:
+def _resolve_cdp_user_data_dir(platform: AIPlatform, browser_profile_dir: str, account: BrowserAccount | None = None) -> Path:
+    account_profile = account.chrome_user_data_dir if account else None
+    if account_profile:
+        profile_dir = Path(account_profile).expanduser()
+    elif platform.chrome_user_data_dir:
         profile_dir = Path(platform.chrome_user_data_dir).expanduser()
     else:
         profile_root = Path(browser_profile_dir).expanduser()
         profile_dir = profile_root.parent / "cdp-profiles" / platform.platform_id
+        if account is not None:
+            profile_dir = profile_dir / account.account_id
     if not profile_dir.is_absolute():
         profile_dir = Path.cwd() / profile_dir
     return profile_dir
+
+
+def _account_label(account: BrowserAccount | None) -> str:
+    if account is None:
+        return ""
+    label = account.account_name or account.account_id
+    return f"/{label}"
 
 
 def _resolve_chrome_path(configured_path: str | None) -> str:

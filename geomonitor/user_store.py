@@ -71,6 +71,20 @@ class UserStore:
                   notification_message text,
                   foreign key(user_id) references users(id)
                 );
+
+                create table if not exists browser_account_status (
+                  platform_id text not null,
+                  account_id text not null,
+                  account_name text,
+                  status text not null,
+                  run_id text,
+                  question_id text,
+                  error_message text,
+                  last_used_at text not null,
+                  last_success_at text,
+                  blocked_at text,
+                  primary key(platform_id, account_id)
+                );
                 """
             )
             self._ensure_column(db, "users", "quota_total", "integer not null default 3")
@@ -239,6 +253,80 @@ class UserStore:
             else:
                 row = db.execute("select * from monitors where id = ? and user_id = ?", (monitor_id, user_id)).fetchone()
             return _monitor_dict(row)
+
+    def update_browser_account_status(
+        self,
+        platform_id: str,
+        account_id: str,
+        account_name: str | None,
+        status: str,
+        run_id: str,
+        question_id: str,
+        error_message: str | None,
+    ) -> None:
+        current = now_iso()
+        blocked_at = current if status in {"blocked", "login_required"} else None
+        with self._connect() as db:
+            existing = db.execute(
+                """
+                select last_success_at, blocked_at from browser_account_status
+                where platform_id = ? and account_id = ?
+                """,
+                (platform_id, account_id),
+            ).fetchone()
+            last_success_at = current if status in {"success", "partial_success"} else (existing["last_success_at"] if existing else None)
+            final_blocked_at = blocked_at if blocked_at is not None else None
+            db.execute(
+                """
+                insert into browser_account_status(
+                  platform_id, account_id, account_name, status, run_id, question_id,
+                  error_message, last_used_at, last_success_at, blocked_at
+                )
+                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(platform_id, account_id) do update set
+                  account_name=excluded.account_name,
+                  status=excluded.status,
+                  run_id=excluded.run_id,
+                  question_id=excluded.question_id,
+                  error_message=excluded.error_message,
+                  last_used_at=excluded.last_used_at,
+                  last_success_at=excluded.last_success_at,
+                  blocked_at=excluded.blocked_at
+                """,
+                (
+                    platform_id,
+                    account_id,
+                    account_name,
+                    status,
+                    run_id,
+                    question_id,
+                    error_message,
+                    current,
+                    last_success_at,
+                    final_blocked_at,
+                ),
+            )
+
+    def list_browser_account_statuses(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from browser_account_status
+                order by platform_id asc, account_id asc
+                """
+            ).fetchall()
+            return [_row_dict(row) or {} for row in rows]
+
+    def clear_browser_account_status(self, platform_id: str, account_id: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update browser_account_status
+                set status = 'ready', error_message = null, blocked_at = null
+                where platform_id = ? and account_id = ?
+                """,
+                (platform_id, account_id),
+            )
 
 
 def _row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
