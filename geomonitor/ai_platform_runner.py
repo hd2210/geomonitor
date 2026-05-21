@@ -2049,8 +2049,11 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
           log(`answerScopes=${answerScopes.length} beforeExternalLinks=${before.size}`);
           log(`candidates scoped=${scopedCandidates.length} page=${pageCandidates.length}`);
           const initialLayer = findCitationLayer();
+          const initialTongyiRefCount = platformId === 'tongyi' ? countTongyiRefNodes(document) : 0;
           if (initialLayer) {
             log(`initialCitationLayer=${describeElement(initialLayer)}`);
+          } else if (platformId === 'tongyi' && initialTongyiRefCount > 0) {
+            log(`skipReclickBecauseRefUrlExists=${initialTongyiRefCount}`);
           } else {
             const verified = await clickVerifiedTrigger([...scopedCandidates, ...pageCandidates], before);
             log(`verified=${verified ? textOf(verified).slice(0, 80) : '(none)'}`);
@@ -2079,6 +2082,12 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
           return {items, debug};
 
           function collectItemsFromRoot(root, layer, beforeLinks) {
+            if (platformId === 'tongyi') {
+              const tongyiItems = extractTongyiCitationCards(root);
+              if (tongyiItems[0]) log(`firstTongyiRef=${tongyiItems[0].url}`);
+              log(`tongyiRefItems=${tongyiItems.length}`);
+              return tongyiItems;
+            }
             const linkElements = Array.from(root.querySelectorAll('a[href]'))
               .filter((a) => isExternalHref(a.href) && (visible(a) || visibleCitationCard(a)));
             const preferred = linkElements.filter((a) => layer || !beforeLinks.has(a.href) || hasCitationAncestor(a));
@@ -2089,7 +2098,7 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
               const site = inferSiteName(a, parentText);
               return {title: text || parentText || a.href, site_name: site, url: a.href};
             });
-            const cardItems = platformId === 'tongyi' ? extractCitationCards(root) : (platformId === 'doubao' ? extractDoubaoCitationCards(root) : (platformId === 'yuanbao' ? extractYuanbaoCitationCards(root) : []));
+            const cardItems = platformId === 'doubao' ? extractDoubaoCitationCards(root) : (platformId === 'yuanbao' ? extractYuanbaoCitationCards(root) : []);
             if (anchorItems[0]) log(`firstAnchor=${anchorItems[0].url}`);
             if (cardItems[0]) log(`firstCard=${cardItems[0].url}`);
             return [...anchorItems, ...cardItems];
@@ -2243,6 +2252,10 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
           }
 
           function findCitationLayer() {
+            if (platformId === 'tongyi') {
+              const tongyiLayer = findTongyiCitationLayer();
+              if (tongyiLayer) return tongyiLayer;
+            }
             if (platformId === 'yuanbao') {
               const yuanbaoLayer = document.querySelector('#chatReferenceList');
               if (yuanbaoLayer && visible(yuanbaoLayer)) return yuanbaoLayer;
@@ -2278,6 +2291,66 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
                 return (br.width * br.height) - (ar.width * ar.height);
               });
             return layers[0] || null;
+          }
+
+          function findTongyiCitationLayer() {
+            const refNodes = Array.from(document.querySelectorAll([
+              '[data-click-extra*="ref_url"]',
+              '[data-exposure-extra*="ref_url"]',
+              '[data-log-params*="ref_url"]',
+              '[data-log*="ref_url"]',
+              '[data-extra*="ref_url"]',
+              '[data-c="refer_panel"]',
+              '[class*="source-item"]'
+            ].join(','))).filter((el) => el && el.nodeType === 1);
+            log(`tongyiRefNodeCount=${refNodes.length}`);
+            if (refNodes.length) {
+              const candidates = [];
+              for (const node of refNodes.slice(0, 20)) {
+                for (const selector of [
+                  '[data-panel]',
+                  '[data-panel-group-id]',
+                  '[class*="deep-think-source"]',
+                  '[class*="source"]',
+                  '[class*="refer"]',
+                  'aside',
+                  'section',
+                  'article',
+                  'div'
+                ]) {
+                  const candidate = node.closest(selector);
+                  if (candidate && candidate.nodeType === 1 && visible(candidate) && textOf(candidate).length > 20) {
+                    candidates.push(candidate);
+                  }
+                }
+              }
+              const best = Array.from(new Set(candidates))
+                .map((el) => {
+                  const rect = el.getBoundingClientRect();
+                  const text = textOf(el);
+                  const refCount = countTongyiRefNodes(el);
+                  const classScore = /deep-think-source|source|refer/i.test(String(el.className || '')) ? 500 : 0;
+                  const panelScore = el.hasAttribute('data-panel') || el.hasAttribute('data-panel-group-id') ? 300 : 0;
+                  const areaScore = Math.min(rect.width * rect.height / 1000, 500);
+                  return {el, score: refCount * 800 + classScore + panelScore + areaScore + Math.min(text.length / 20, 200)};
+                })
+                .sort((a, b) => b.score - a.score)[0]?.el;
+              if (best) {
+                log(`tongyiPanelByRefUrl=${describeElement(best)} refs=${countTongyiRefNodes(best)}`);
+                return best;
+              }
+            }
+            return null;
+          }
+
+          function countTongyiRefNodes(root) {
+            return Array.from(root.querySelectorAll?.([
+              '[data-click-extra*="ref_url"]',
+              '[data-exposure-extra*="ref_url"]',
+              '[data-log-params*="ref_url"]',
+              '[data-log*="ref_url"]',
+              '[data-extra*="ref_url"]'
+            ].join(',')) || []).length;
           }
 
           function findRightCitationLayer(titlePattern, requireLinks = true) {
@@ -2353,6 +2426,33 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
             return dedupeItems(cards).slice(0, 80);
           }
 
+          function extractTongyiCitationCards(root) {
+            const selector = [
+              '[data-click-extra*="ref_url"]',
+              '[data-exposure-extra*="ref_url"]',
+              '[data-log-params*="ref_url"]',
+              '[data-log*="ref_url"]',
+              '[data-extra*="ref_url"]'
+            ].join(',');
+            const nodes = Array.from(root.querySelectorAll?.(selector) || [])
+              .filter((el) => el && el.nodeType === 1);
+            const cards = nodes
+              .map((el) => {
+                const card = el.closest('[data-c="refer_panel"], [class*="source-item"], li, article, section, div') || el;
+                const text = textOf(card) || textOf(el);
+                const url = findTongyiRefUrl(el) || findTongyiRefUrl(card);
+                return {text, url};
+              })
+              .filter((item) => item.url && isExternalHref(item.url) && item.text.length >= 6)
+              .map((item) => {
+                const site = inferSiteNameFromText(item.url, item.text);
+                const lines = item.text.split(/\\s{2,}|\\n/).map((line) => line.trim()).filter(Boolean);
+                const title = lines.find((line) => line.length >= 6 && !line.includes(site) && !/^\\d+$/.test(line)) || item.text || item.url;
+                return {title, site_name: site, url: item.url};
+              });
+            return dedupeItems(cards).slice(0, 120);
+          }
+
           function extractDoubaoCitationCards(root) {
             const cards = Array.from(root.querySelectorAll('div.w-full a[href], .w-full a[href]'))
               .filter((a) => isExternalHref(a.href) && visibleCitationCard(a))
@@ -2408,9 +2508,9 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
           }
 
           function findTongyiRefUrl(el) {
-            const stack = [el, ...Array.from(el.querySelectorAll?.('[data-click-extra], [data-exposure-extra]') || [])].slice(0, 60);
+            const stack = [el, ...Array.from(el.querySelectorAll?.('[data-click-extra], [data-exposure-extra], [data-log-params], [data-log], [data-extra]') || [])].slice(0, 80);
             for (const node of stack) {
-              for (const attr of ['data-click-extra', 'data-exposure-extra']) {
+              for (const attr of ['data-click-extra', 'data-exposure-extra', 'data-log-params', 'data-log', 'data-extra']) {
                 const value = node.getAttribute?.(attr);
                 if (!value) continue;
                 const parsed = parseJsonish(value);
@@ -2523,7 +2623,14 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
           }
 
           function findCitationScroller(root) {
-            const nodes = [root, ...Array.from(root.querySelectorAll('*'))]
+            const base = root?.nodeType === 9
+              ? [root.scrollingElement, root.documentElement, root.body]
+              : [root];
+            const descendants = typeof root?.querySelectorAll === 'function'
+              ? Array.from(root.querySelectorAll('*'))
+              : [];
+            const nodes = [...base, ...descendants]
+              .filter((el) => el && el.nodeType === 1 && typeof el.getBoundingClientRect === 'function')
               .filter((el) => {
                 const rect = el.getBoundingClientRect();
                 const style = getComputedStyle(el);
