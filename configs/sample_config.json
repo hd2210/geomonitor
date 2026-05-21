@@ -274,6 +274,6 @@
     "profile_lock_wait_seconds": 60,
     "browser_concurrency": 5,
     "api_concurrency": 5,
-    "question_count": 5
+    "question_count": 2
   }
 }

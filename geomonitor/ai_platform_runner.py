@@ -848,53 +848,6 @@ def _cdp_type_text_as_keys(client: _DirectCDPClient, text: str) -> None:
             time.sleep(0.02)
 
 
-def _cdp_paste_into_active_input(client: _DirectCDPClient, text: str) -> bool:
-    return bool(
-        client.eval(
-            f"""
-            (() => {{
-              const text = {json.dumps(text)};
-              const el = document.activeElement;
-              if (!el) return false;
-              el.focus();
-              try {{
-                const data = new DataTransfer();
-                data.setData('text/plain', text);
-                el.dispatchEvent(new InputEvent('beforeinput', {{
-                  bubbles: true,
-                  cancelable: true,
-                  inputType: 'insertFromPaste',
-                  data: text
-                }}));
-                el.dispatchEvent(new ClipboardEvent('paste', {{
-                  bubbles: true,
-                  cancelable: true,
-                  clipboardData: data
-                }}));
-              }} catch (error) {{}}
-              const current = ('value' in el ? el.value : (el.innerText || el.textContent || ''));
-              if (!current.includes(text)) {{
-                document.execCommand('insertText', false, text);
-              }}
-              try {{
-                el.dispatchEvent(new InputEvent('input', {{
-                  bubbles: true,
-                  inputType: 'insertText',
-                  data: text
-                }}));
-              }} catch {{
-                el.dispatchEvent(new Event('input', {{bubbles: true}}));
-              }}
-              el.dispatchEvent(new Event('change', {{bubbles: true}}));
-              const updated = ('value' in el ? el.value : (el.innerText || el.textContent || ''));
-              return updated.includes(text);
-            }})()
-            """,
-            timeout_seconds=5,
-        )
-    )
-
-
 def _cdp_wenxin_input_state(client: _DirectCDPClient, question: str) -> dict:
     state = client.eval(
         f"""
@@ -936,6 +889,7 @@ def _cdp_wenxin_input_state(client: _DirectCDPClient, question: str) -> dict:
           return {{
             ok: Boolean(input && inputText.includes(question)),
             text: inputText,
+            occurrenceCount: question ? inputText.split(question).length - 1 : 0,
             hasInput: Boolean(input),
             sendReady: buttons.length > 0
           }};
@@ -993,13 +947,12 @@ def _cdp_wenxin_empty_input_warning(client: _DirectCDPClient) -> bool:
     )
 
 
-def _cdp_fill_wenxin_question(client: _DirectCDPClient, point: dict, question: str, *, force_key_events: bool = False) -> dict:
+def _cdp_fill_wenxin_question(client: _DirectCDPClient, point: dict, question: str) -> dict:
     _cdp_click_point(client, point)
     _cdp_clear_active_input(client)
-    if force_key_events or not _cdp_paste_into_active_input(client, question):
-        _cdp_type_text_as_keys(client, question)
+    _cdp_type_text_as_keys(client, question)
     state = _cdp_wenxin_input_state(client, question)
-    if not state.get("ok") and not force_key_events:
+    if int(state.get("occurrenceCount") or 0) > 1:
         _cdp_clear_active_input(client)
         _cdp_type_text_as_keys(client, question)
         state = _cdp_wenxin_input_state(client, question)
@@ -1034,7 +987,7 @@ def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None
         point = _cdp_wait_for_input_point(client, "wenxin", timeout_seconds=10, clear_existing=False)
         if not point:
             raise RuntimeError(f"Wenxin submit reported empty input and input disappeared. {_cdp_input_diagnostics(client, 'wenxin')}")
-        input_state = _cdp_fill_wenxin_question(client, point, question, force_key_events=True)
+        input_state = _cdp_fill_wenxin_question(client, point, question)
         if not input_state or not input_state.get("ok"):
             text = input_state.get("text") if isinstance(input_state, dict) else ""
             raise RuntimeError(f"Wenxin retry input did not accept text: current={text[:80]!r}. {_cdp_input_diagnostics(client, 'wenxin')}")
