@@ -662,7 +662,8 @@ def _run_direct_cdp_question(
             {"width": 1440, "height": 1200, "deviceScaleFactor": 1, "mobile": False},
         )
         client.call("Page.bringToFront")
-        client.call("Page.navigate", {"url": target_url})
+        if not _same_url_without_fragment(_cdp_current_url(client), target_url):
+            client.call("Page.navigate", {"url": target_url})
         _cdp_wait_for_ready(client, timeout_seconds)
         _cdp_close_blocking_popups(client)
         if platform_id == "doubao":
@@ -761,36 +762,9 @@ def _cdp_close_blocking_popups(client: _DirectCDPClient) -> None:
 
 
 def _cdp_submit_doubao_question(client: _DirectCDPClient, question: str) -> None:
-    payload = json.dumps(question, ensure_ascii=False)
-    point = client.eval(
-        f"""
-        (() => {{
-          const candidates = [
-            ...document.querySelectorAll('textarea'),
-            ...document.querySelectorAll('[contenteditable="true"]'),
-            ...document.querySelectorAll('.ql-editor'),
-            ...document.querySelectorAll('[data-placeholder]')
-          ].filter(el => {{
-            const rect = el.getBoundingClientRect();
-            return rect.width > 20 && rect.height > 10 && getComputedStyle(el).visibility !== 'hidden';
-          }});
-          const el = candidates[candidates.length - 1];
-          if (!el) return null;
-          el.focus();
-          if ('value' in el) {{
-            el.value = '';
-          }} else {{
-            el.textContent = '';
-          }}
-          el.dispatchEvent(new InputEvent('input', {{bubbles: true, inputType: 'deleteContentBackward', data: null}}));
-          el.dispatchEvent(new Event('change', {{bubbles: true}}));
-          const rect = el.getBoundingClientRect();
-          return {{x: rect.left + Math.min(rect.width - 8, Math.max(8, rect.width / 2)), y: rect.top + Math.min(rect.height - 8, Math.max(8, rect.height / 2))}};
-        }})()
-        """
-    )
+    point = _cdp_wait_for_input_point(client, "doubao", timeout_seconds=30)
     if not point:
-        raise RuntimeError("Input selector was not visible in CDP page.")
+        raise RuntimeError(f"Input selector was not visible in CDP page. {_cdp_input_diagnostics(client, 'doubao')}")
     import time
 
     client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": point["x"], "y": point["y"]})
@@ -826,73 +800,106 @@ def _cdp_submit_generic_question(client: _DirectCDPClient, question: str) -> Non
     _cdp_submit_doubao_question(client, question)
 
 
-def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None:
+def _cdp_click_point(client: _DirectCDPClient, point: dict) -> None:
+    client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": point["x"], "y": point["y"]})
+    client.call(
+        "Input.dispatchMouseEvent",
+        {"type": "mousePressed", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1},
+    )
+    client.call(
+        "Input.dispatchMouseEvent",
+        {"type": "mouseReleased", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1},
+    )
+
+
+def _cdp_clear_active_input(client: _DirectCDPClient) -> None:
     import time
 
-    quoted_question = json.dumps(question)
-    point = client.eval(
-        """
-        (() => {
-          const selectors = [
-            '[data-slate-editor="true"][contenteditable="true"]',
-            '[contenteditable="true"][role="textbox"]',
-            '[contenteditable="true"]',
-            'textarea',
-            '[role="textbox"]'
-          ];
-          const visible = (el) => {
-            const rect = el.getBoundingClientRect();
-            const style = getComputedStyle(el);
-            return rect.width > 20 && rect.height > 10 &&
-              rect.bottom > 0 && rect.right > 0 &&
-              style.visibility !== 'hidden' && style.display !== 'none';
-          };
-          const candidates = selectors.flatMap((selector) => [...document.querySelectorAll(selector)]).filter(visible);
-          const el = candidates[candidates.length - 1];
-          if (!el) return null;
-          el.scrollIntoView({block: 'center', inline: 'center'});
-          el.focus();
-          const rect = el.getBoundingClientRect();
-          return {x: rect.left + Math.min(rect.width - 8, Math.max(8, rect.width / 2)), y: rect.top + Math.min(rect.height - 8, Math.max(8, rect.height / 2))};
-        })()
-        """
-    )
-    if not point:
-        diagnostics = _cdp_wenxin_input_diagnostics(client)
-        blocked_marker = _blocked_text_match(diagnostics)
-        if blocked_marker:
-            raise RuntimeError(f"Blocked: {blocked_marker}")
-        raise RuntimeError(f"Wenxin CDP input was not visible. {diagnostics}")
-
-    client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": point["x"], "y": point["y"]})
-    client.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1})
-    client.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": point["x"], "y": point["y"], "button": "left", "clickCount": 1})
     client.eval(
         """
         (() => {
           const el = document.activeElement;
-          if (!el) return;
+          if (!el) return false;
           if ('value' in el && typeof el.select === 'function') {
             el.select();
-            return;
+            return true;
           }
           const selection = window.getSelection();
-          if (!selection) return;
+          if (!selection) return false;
           const range = document.createRange();
           range.selectNodeContents(el);
           selection.removeAllRanges();
           selection.addRange(range);
+          return true;
         })()
         """
     )
     client.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8})
     client.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8})
-    client.call("Input.insertText", {"text": question})
-    time.sleep(0.7)
-    input_state = client.eval(
+    time.sleep(0.2)
+
+
+def _cdp_type_text_as_keys(client: _DirectCDPClient, text: str) -> None:
+    import time
+
+    for index, char in enumerate(text.replace("\r", " ").replace("\n", " ")):
+        client.call("Input.dispatchKeyEvent", {"type": "char", "text": char, "unmodifiedText": char})
+        if index % 12 == 0:
+            time.sleep(0.02)
+
+
+def _cdp_paste_into_active_input(client: _DirectCDPClient, text: str) -> bool:
+    return bool(
+        client.eval(
+            f"""
+            (() => {{
+              const text = {json.dumps(text)};
+              const el = document.activeElement;
+              if (!el) return false;
+              el.focus();
+              try {{
+                const data = new DataTransfer();
+                data.setData('text/plain', text);
+                el.dispatchEvent(new InputEvent('beforeinput', {{
+                  bubbles: true,
+                  cancelable: true,
+                  inputType: 'insertFromPaste',
+                  data: text
+                }}));
+                el.dispatchEvent(new ClipboardEvent('paste', {{
+                  bubbles: true,
+                  cancelable: true,
+                  clipboardData: data
+                }}));
+              }} catch (error) {{}}
+              const current = ('value' in el ? el.value : (el.innerText || el.textContent || ''));
+              if (!current.includes(text)) {{
+                document.execCommand('insertText', false, text);
+              }}
+              try {{
+                el.dispatchEvent(new InputEvent('input', {{
+                  bubbles: true,
+                  inputType: 'insertText',
+                  data: text
+                }}));
+              }} catch {{
+                el.dispatchEvent(new Event('input', {{bubbles: true}}));
+              }}
+              el.dispatchEvent(new Event('change', {{bubbles: true}}));
+              const updated = ('value' in el ? el.value : (el.innerText || el.textContent || ''));
+              return updated.includes(text);
+            }})()
+            """,
+            timeout_seconds=5,
+        )
+    )
+
+
+def _cdp_wenxin_input_state(client: _DirectCDPClient, question: str) -> dict:
+    state = client.eval(
         f"""
         (() => {{
-          const question = {quoted_question};
+          const question = {json.dumps(question)};
           const selectors = [
             '[data-slate-editor="true"][contenteditable="true"]',
             '[contenteditable="true"][role="textbox"]',
@@ -909,52 +916,38 @@ def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None
           }};
           const textOf = (el) => ('value' in el ? el.value : (el.innerText || el.textContent || '')).trim();
           const candidates = selectors.flatMap((selector) => [...document.querySelectorAll(selector)]).filter(visible);
-          const el = candidates[candidates.length - 1];
-          if (!el) return {{ok: false, text: '', reason: 'missing-input'}};
-          let text = textOf(el);
-          if (text.includes(question)) return {{ok: true, text, reason: 'insertText'}};
-
-          el.focus();
-          const selection = window.getSelection();
-          if (selection && !('value' in el)) {{
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            range.collapse(false);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }}
-          try {{
-            const data = new DataTransfer();
-            data.setData('text/plain', question);
-            const pasteEvent = new ClipboardEvent('paste', {{
-              bubbles: true,
-              cancelable: true,
-              clipboardData: data
-            }});
-            el.dispatchEvent(pasteEvent);
-          }} catch (error) {{
-            document.execCommand('insertText', false, question);
-          }}
-          text = textOf(el);
-          if (!text.includes(question)) {{
-            document.execCommand('insertText', false, question);
-            text = textOf(el);
-          }}
-          return {{ok: text.includes(question), text, reason: 'paste-fallback'}};
+          const input = candidates[candidates.length - 1];
+          const inputText = input ? textOf(input) : '';
+          const buttons = [...document.querySelectorAll('button,[role=button],a,div,span')].filter((el) => {{
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+            const name = `${{el.className || ''}} ${{el.id || ''}}`;
+            const ariaDisabled = el.getAttribute('aria-disabled') === 'true';
+            const disabled = Boolean(el.disabled) || el.hasAttribute('disabled');
+            return rect.width > 8 && rect.height > 8 &&
+              style.visibility !== 'hidden' && style.display !== 'none' &&
+              style.pointerEvents !== 'none' &&
+              Number(style.opacity || 1) > 0.2 &&
+              !disabled && !ariaDisabled &&
+              !/disabled|disable|inactive/.test(name.toLowerCase()) &&
+              (/发送|send/i.test(text) || /send/i.test(name));
+          }});
+          return {{
+            ok: Boolean(input && inputText.includes(question)),
+            text: inputText,
+            hasInput: Boolean(input),
+            sendReady: buttons.length > 0
+          }};
         }})()
-        """
+        """,
+        timeout_seconds=5,
     )
-    if not input_state or not input_state.get("ok"):
-        reason = input_state.get("reason") if isinstance(input_state, dict) else "unknown"
-        text = input_state.get("text") if isinstance(input_state, dict) else ""
-        diagnostics = _cdp_wenxin_input_diagnostics(client)
-        blocked_marker = _blocked_text_match(diagnostics)
-        if blocked_marker:
-            raise RuntimeError(f"Blocked: {blocked_marker}")
-        raise RuntimeError(f"Wenxin input did not accept text before submit: {reason}, current={text[:80]!r}. {diagnostics}")
+    return state if isinstance(state, dict) else {"ok": False, "text": "", "hasInput": False, "sendReady": False}
 
-    time.sleep(0.5)
-    clicked = client.eval(
+
+def _cdp_click_wenxin_send_button(client: _DirectCDPClient) -> bool:
+    point = client.eval(
         """
         (() => {
           const nodes = [...document.querySelectorAll('button,[role=button],a,div,span')];
@@ -966,6 +959,7 @@ def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None
             const ariaDisabled = el.getAttribute('aria-disabled') === 'true';
             const disabled = Boolean(el.disabled) || el.hasAttribute('disabled');
             return rect.width > 8 && rect.height > 8 &&
+              rect.bottom > 0 && rect.right > 0 &&
               style.visibility !== 'hidden' && style.display !== 'none' &&
               style.pointerEvents !== 'none' &&
               Number(style.opacity || 1) > 0.2 &&
@@ -974,22 +968,171 @@ def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None
               (/发送|send/i.test(text) || /send/i.test(name));
           });
           const el = candidates[candidates.length - 1];
-          if (!el) return false;
-          el.click();
-          return true;
+          if (!el) return null;
+          el.scrollIntoView({block: 'center', inline: 'center'});
+          const rect = el.getBoundingClientRect();
+          return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
         })()
-        """
+        """,
+        timeout_seconds=5,
     )
-    if not clicked:
+    if not point:
+        return False
+    _cdp_click_point(client, point)
+    return True
+
+
+def _cdp_wenxin_empty_input_warning(client: _DirectCDPClient) -> bool:
+    return bool(
+        client.eval(
+            """
+            (() => /你输入的内容为空|输入内容为空|请输入内容|没有输入内容/.test(document.body?.innerText || ''))()
+            """,
+            timeout_seconds=5,
+        )
+    )
+
+
+def _cdp_fill_wenxin_question(client: _DirectCDPClient, point: dict, question: str, *, force_key_events: bool = False) -> dict:
+    _cdp_click_point(client, point)
+    _cdp_clear_active_input(client)
+    if force_key_events or not _cdp_paste_into_active_input(client, question):
+        _cdp_type_text_as_keys(client, question)
+    state = _cdp_wenxin_input_state(client, question)
+    if not state.get("ok") and not force_key_events:
+        _cdp_clear_active_input(client)
+        _cdp_type_text_as_keys(client, question)
+        state = _cdp_wenxin_input_state(client, question)
+    return state
+
+
+def _cdp_submit_wenxin_question(client: _DirectCDPClient, question: str) -> None:
+    import time
+
+    point = _cdp_wait_for_input_point(client, "wenxin", timeout_seconds=30, clear_existing=False)
+    if not point:
+        diagnostics = _cdp_input_diagnostics(client, "wenxin")
+        blocked_marker = _blocked_text_match(diagnostics)
+        if blocked_marker:
+            raise RuntimeError(f"Blocked: {blocked_marker}")
+        raise RuntimeError(f"Wenxin CDP input was not visible. {diagnostics}")
+
+    input_state = _cdp_fill_wenxin_question(client, point, question)
+    if not input_state or not input_state.get("ok"):
+        text = input_state.get("text") if isinstance(input_state, dict) else ""
+        diagnostics = _cdp_input_diagnostics(client, "wenxin")
+        blocked_marker = _blocked_text_match(diagnostics)
+        if blocked_marker:
+            raise RuntimeError(f"Blocked: {blocked_marker}")
+        raise RuntimeError(f"Wenxin input did not accept text before submit: current={text[:80]!r}. {diagnostics}")
+
+    time.sleep(0.5)
+    if not _cdp_click_wenxin_send_button(client):
         raise RuntimeError("Wenxin send button was not enabled after filling input.")
     time.sleep(1)
+    if _cdp_wenxin_empty_input_warning(client):
+        point = _cdp_wait_for_input_point(client, "wenxin", timeout_seconds=10, clear_existing=False)
+        if not point:
+            raise RuntimeError(f"Wenxin submit reported empty input and input disappeared. {_cdp_input_diagnostics(client, 'wenxin')}")
+        input_state = _cdp_fill_wenxin_question(client, point, question, force_key_events=True)
+        if not input_state or not input_state.get("ok"):
+            text = input_state.get("text") if isinstance(input_state, dict) else ""
+            raise RuntimeError(f"Wenxin retry input did not accept text: current={text[:80]!r}. {_cdp_input_diagnostics(client, 'wenxin')}")
+        if not _cdp_click_wenxin_send_button(client):
+            raise RuntimeError("Wenxin send button was not enabled after retry filling input.")
+        time.sleep(1)
+        if _cdp_wenxin_empty_input_warning(client):
+            raise RuntimeError("Wenxin submit still reported empty input after keyboard retry.")
 
 
-def _cdp_wenxin_input_diagnostics(client: _DirectCDPClient) -> str:
+def _cdp_wait_for_input_point(
+    client: _DirectCDPClient,
+    platform_id: str,
+    timeout_seconds: int,
+    *,
+    clear_existing: bool = True,
+) -> dict | None:
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        point = client.eval(
+            f"""
+            (() => {{
+              const platformId = {json.dumps(platform_id)};
+              const clearExisting = {json.dumps(clear_existing)};
+              const selectors = platformId === 'wenxin'
+                ? [
+                    '[data-slate-editor="true"][contenteditable="true"]',
+                    '[contenteditable="true"][role="textbox"]',
+                    '[contenteditable="true"]',
+                    'textarea',
+                    '[role="textbox"]',
+                    '[data-placeholder]'
+                  ]
+                : [
+                    'textarea',
+                    '[contenteditable="true"]',
+                    '.ql-editor',
+                    '[data-placeholder]',
+                    '[role="textbox"]'
+                  ];
+              const visible = (el) => {{
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 20 && rect.height > 10 &&
+                  rect.bottom > 0 && rect.right > 0 &&
+                  style.visibility !== 'hidden' && style.display !== 'none' &&
+                  style.pointerEvents !== 'none' &&
+                  Number(style.opacity || 1) > 0.05;
+              }};
+              const candidates = selectors
+                .flatMap((selector) => [...document.querySelectorAll(selector)])
+                .filter(visible)
+                .filter((el) => {{
+                  const text = (el.innerText || el.textContent || el.value || '').trim();
+                  const placeholder = el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '';
+                  const merged = `${{text}} ${{placeholder}} ${{el.className || ''}} ${{el.id || ''}}`;
+                  return !/历史对话|最近对话|新对话|搜索/.test(merged) || /发送|输入|提问|帮我|需要什么帮助|placeholder|editor|textarea/i.test(merged);
+                }});
+              const el = candidates[candidates.length - 1];
+              if (!el) return null;
+              el.scrollIntoView({{block: 'center', inline: 'center'}});
+              el.focus();
+              if (clearExisting) {{
+                if ('value' in el) {{
+                  el.value = '';
+                }} else {{
+                  el.textContent = '';
+                }}
+                try {{
+                  el.dispatchEvent(new InputEvent('input', {{bubbles: true, inputType: 'deleteContentBackward', data: null}}));
+                }} catch {{
+                  el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                }}
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+              }}
+              const rect = el.getBoundingClientRect();
+              return {{
+                x: rect.left + Math.min(rect.width - 8, Math.max(8, rect.width / 2)),
+                y: rect.top + Math.min(rect.height - 8, Math.max(8, rect.height / 2))
+              }};
+            }})()
+            """,
+            timeout_seconds=5,
+        )
+        if point:
+            return point
+        time.sleep(1)
+    return None
+
+
+def _cdp_input_diagnostics(client: _DirectCDPClient, platform_id: str) -> str:
     try:
         state = client.eval(
-            """
-            (() => {
+            f"""
+            (() => {{
+              const platformId = {json.dumps(platform_id)};
               const selectors = [
                 '[data-slate-editor="true"][contenteditable="true"]',
                 '[contenteditable="true"][role="textbox"]',
@@ -998,24 +1141,25 @@ def _cdp_wenxin_input_diagnostics(client: _DirectCDPClient) -> str:
                 '[role="textbox"]',
                 '[contenteditable]',
                 '[data-placeholder]',
+                '.ql-editor',
                 '[class*="input" i]',
                 '[class*="editor" i]'
               ];
-              const visible = (el) => {
+              const visible = (el) => {{
                 const rect = el.getBoundingClientRect();
                 const style = getComputedStyle(el);
                 return rect.width > 8 && rect.height > 8 &&
                   rect.bottom > 0 && rect.right > 0 &&
                   style.visibility !== 'hidden' && style.display !== 'none';
-              };
+              }};
               const counts = Object.fromEntries(selectors.map((selector) => [selector, document.querySelectorAll(selector).length]));
               const visibleInputs = selectors
                 .flatMap((selector) => [...document.querySelectorAll(selector)].map((el) => ({selector, el})))
                 .filter((item) => visible(item.el))
                 .slice(0, 8)
-                .map((item) => {
+                .map((item) => {{
                   const rect = item.el.getBoundingClientRect();
-                  return {
+                  return {{
                     selector: item.selector,
                     tag: item.el.tagName.toLowerCase(),
                     role: item.el.getAttribute('role') || '',
@@ -1023,16 +1167,16 @@ def _cdp_wenxin_input_diagnostics(client: _DirectCDPClient) -> str:
                     placeholder: item.el.getAttribute('placeholder') || item.el.getAttribute('data-placeholder') || '',
                     text: (item.el.innerText || item.el.textContent || item.el.value || '').replace(/\\s+/g, ' ').trim().slice(0, 80),
                     box: `${Math.round(rect.width)}x${Math.round(rect.height)}@${Math.round(rect.left)},${Math.round(rect.top)}`
-                  };
-                });
-              return {
+                  }};
+                }});
+              return {{
                 url: location.href,
                 title: document.title,
                 counts,
                 visibleInputs,
                 bodyText: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 500)
-              };
-            })()
+              }};
+            }})()
             """,
             timeout_seconds=10,
         )
@@ -1083,7 +1227,7 @@ def _cdp_wait_for_answer(client: _DirectCDPClient, question: str, timeout_second
         generating = bool(
             client.eval(
                 """
-                (() => /停止|生成中|思考中|正在/.test(document.body.innerText || ''))()
+                (() => /停止|生成中|思考中|正在|开始全网搜索/.test(document.body.innerText || ''))()
                 """,
                 timeout_seconds=5,
             )
@@ -1218,20 +1362,26 @@ def _cdp_collect_wenxin_citations_by_clicking_cards(
               return rect.left >= window.innerWidth * 0.45 && rect.width >= 240;
             });
           const root = roots.sort((a, b) => b.getBoundingClientRect().width * b.getBoundingClientRect().height - a.getBoundingClientRect().width * a.getBoundingClientRect().height)[0] || document.body;
-          const cards = Array.from(root.querySelectorAll('[class^="item__"], [class*=" item__"], [class*="item__"], li, article, section'))
-            .filter(visible)
-            .map((el) => {
-              const rect = el.getBoundingClientRect();
-              const text = textOf(el);
-              return {el, text, area: rect.width * rect.height, top: rect.top, left: rect.left, width: rect.width, height: rect.height};
-            })
-            .filter((item) => item.text.length >= 20 && /\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|搜狗|百度|搜狐|网易|新浪|腾讯|凤凰|今日头条|百家号|知乎|什么值得买|太平洋|中关村/.test(item.text))
-            .sort((a, b) => a.top - b.top || b.area - a.area);
+          const scroller = findScroller(root);
+          const snapshots = [];
+          for (let round = 0; round < 6; round += 1) {
+            snapshots.push(...collectCards(root, round));
+            if (!scroller) break;
+            const beforeTop = scroller.scrollTop;
+            scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + Math.max(scroller.clientHeight * 0.85, 300));
+            scroller.dispatchEvent(new Event('scroll', {bubbles: true}));
+            if (Math.abs(scroller.scrollTop - beforeTop) < 2) break;
+          }
+          const cards = snapshots.sort((a, b) => a.round - b.round || a.top - b.top || b.area - a.area);
           const selected = [];
+          const selectedTexts = new Set();
           for (const item of cards) {
             if (selected.some((other) => other.el.contains(item.el) || item.el.contains(other.el))) continue;
+            const key = item.text.slice(0, 120);
+            if (selectedTexts.has(key)) continue;
+            selectedTexts.add(key);
             selected.push(item);
-            if (selected.length >= 12) break;
+            if (selected.length >= 40) break;
           }
           return selected.map((item, index) => ({
             index,
@@ -1241,6 +1391,27 @@ def _cdp_collect_wenxin_citations_by_clicking_cards(
             width: Math.round(item.width),
             height: Math.round(item.height)
           }));
+
+          function collectCards(root, round) {
+            return Array.from(root.querySelectorAll('[class^="item__"], [class*=" item__"], [class*="item__"], li, article, section'))
+              .filter(visible)
+              .map((el) => {
+                const rect = el.getBoundingClientRect();
+                const text = textOf(el);
+                return {el, text, area: rect.width * rect.height, top: rect.top, left: rect.left, width: rect.width, height: rect.height, round};
+              })
+              .filter((item) => item.text.length >= 20 && /\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|搜狗|百度|搜狐|网易|新浪|腾讯|凤凰|今日头条|百家号|知乎|什么值得买|太平洋|中关村/.test(item.text));
+          }
+
+          function findScroller(root) {
+            const nodes = [root, ...Array.from(root.querySelectorAll('*'))]
+              .filter((el) => {
+                const style = getComputedStyle(el);
+                return el.scrollHeight > el.clientHeight + 20 && /(auto|scroll)/.test(`${style.overflowY} ${style.overflow}`);
+              })
+              .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+            return nodes[0] || (root.scrollHeight > root.clientHeight + 20 ? root : null);
+          }
         })()
         """,
         timeout_seconds=10,
@@ -1249,7 +1420,7 @@ def _cdp_collect_wenxin_citations_by_clicking_cards(
         return []
 
     items: list[dict[str, str]] = []
-    for candidate in candidates[:8]:
+    for candidate in candidates[:40]:
         if not isinstance(candidate, dict):
             continue
         text = str(candidate.get("text") or "")
@@ -1265,6 +1436,8 @@ def _cdp_collect_wenxin_citations_by_clicking_cards(
         url = _cdp_wait_for_wenxin_clicked_url(client, cdp_url, target_id, before_ids, original_url)
         if _is_external_citation_url(url, "wenxin"):
             items.append({"title": title or url, "site_name": site_name or _site_name_from_url(url), "url": url})
+        elif title or site_name:
+            items.append({"title": title or text[:120], "site_name": site_name, "url": ""})
         current_url = _cdp_current_url(client)
         if current_url != original_url:
             try:
@@ -1936,24 +2109,38 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
             log('linkRoot=(none)');
             return {items: [], debug};
           }
-          const linkElements = Array.from(linkRoot.querySelectorAll('a[href]'))
-            .filter((a) => isExternalHref(a.href) && (visible(a) || visibleCitationCard(a)));
-          log(`externalLinksInRoot=${linkElements.length}`);
-          const preferred = linkElements.filter((a) => citationLayer || !before.has(a.href) || hasCitationAncestor(a));
-          const source = preferred.length ? preferred : linkElements.filter(hasCitationAncestor);
-          log(`preferredLinks=${preferred.length} sourceLinks=${source.length}`);
-          if (source[0]) log(`firstSource=${source[0].href}`);
-          const anchorItems = source.slice(0, 80).map((a) => {
-            const text = textOf(a);
-            const parentText = textOf(a.closest('[role="dialog"], [class*="modal" i], [class*="popup" i], [class*="drawer" i], li, article, section, div') || a);
-            const site = inferSiteName(a, parentText);
-            return {title: text || parentText || a.href, site_name: site, url: a.href};
-          });
-          const cardItems = platformId === 'tongyi' ? extractCitationCards(linkRoot) : (platformId === 'doubao' ? extractDoubaoCitationCards(linkRoot) : (platformId === 'yuanbao' ? extractYuanbaoCitationCards(linkRoot) : []));
-          log(`cardItems=${cardItems.length}`);
-          if (cardItems[0]) log(`firstCard=${cardItems[0].url}`);
-          const items = dedupeItems([...anchorItems, ...cardItems]);
+          const scroller = findCitationScroller(linkRoot);
+          const collected = [];
+          for (let round = 0; round < 6; round += 1) {
+            const roundItems = collectItemsFromRoot(linkRoot, citationLayer, before);
+            collected.push(...roundItems);
+            log(`collectRound=${round} items=${roundItems.length} total=${dedupeItems(collected).length} scroll=${scroller ? `${Math.round(scroller.scrollTop)}/${Math.round(scroller.scrollHeight)}` : '(none)'}`);
+            if (!scroller) break;
+            const beforeTop = scroller.scrollTop;
+            scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + Math.max(scroller.clientHeight * 0.85, 320));
+            scroller.dispatchEvent(new Event('scroll', {bubbles: true}));
+            await sleep(800);
+            if (Math.abs(scroller.scrollTop - beforeTop) < 2) break;
+          }
+          const items = dedupeItems(collected);
           return {items, debug};
+
+          function collectItemsFromRoot(root, layer, beforeLinks) {
+            const linkElements = Array.from(root.querySelectorAll('a[href]'))
+              .filter((a) => isExternalHref(a.href) && (visible(a) || visibleCitationCard(a)));
+            const preferred = linkElements.filter((a) => layer || !beforeLinks.has(a.href) || hasCitationAncestor(a));
+            const source = preferred.length ? preferred : linkElements.filter(hasCitationAncestor);
+            const anchorItems = source.slice(0, 80).map((a) => {
+              const text = textOf(a);
+              const parentText = textOf(a.closest('[role="dialog"], [class*="modal" i], [class*="popup" i], [class*="drawer" i], li, article, section, div') || a);
+              const site = inferSiteName(a, parentText);
+              return {title: text || parentText || a.href, site_name: site, url: a.href};
+            });
+            const cardItems = platformId === 'tongyi' ? extractCitationCards(root) : (platformId === 'doubao' ? extractDoubaoCitationCards(root) : (platformId === 'yuanbao' ? extractYuanbaoCitationCards(root) : []));
+            if (anchorItems[0]) log(`firstAnchor=${anchorItems[0].url}`);
+            if (cardItems[0]) log(`firstCard=${cardItems[0].url}`);
+            return [...anchorItems, ...cardItems];
+          }
 
           function findAnswerScopes() {
             const selectors = [
@@ -2382,6 +2569,20 @@ async def _click_trigger_and_collect_citations(page, triggers: tuple[str, ...], 
             return output;
           }
 
+          function findCitationScroller(root) {
+            const nodes = [root, ...Array.from(root.querySelectorAll('*'))]
+              .filter((el) => {
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width >= 180 && rect.height >= 120 &&
+                  el.scrollHeight > el.clientHeight + 20 &&
+                  /(auto|scroll|overlay)/.test(`${style.overflowY} ${style.overflow}`);
+              })
+              .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+            if (nodes[0]) return nodes[0];
+            return root.scrollHeight > root.clientHeight + 20 ? root : null;
+          }
+
           function currentExternalLinks(root) {
             return new Set(
               Array.from(root.querySelectorAll('a[href]'))
@@ -2468,7 +2669,8 @@ async def _collect_wenxin_citations_by_clicking_cards(page) -> tuple[list[dict[s
     try:
         candidates = await page.evaluate(
             """
-            () => {
+            async () => {
+              const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
               const visible = (el) => {
                 const style = window.getComputedStyle(el);
                 const rect = el.getBoundingClientRect();
@@ -2482,26 +2684,54 @@ async def _collect_wenxin_citations_by_clicking_cards(page) -> tuple[list[dict[s
                   return rect.left >= window.innerWidth * 0.45 && rect.width >= 240;
                 });
               const root = roots.sort((a, b) => b.getBoundingClientRect().width * b.getBoundingClientRect().height - a.getBoundingClientRect().width * a.getBoundingClientRect().height)[0] || document.body;
-              const cards = Array.from(root.querySelectorAll('[class^="item__"], [class*=" item__"], [class*="item__"]'))
-                .filter(visible)
-                .map((el) => {
-                  const rect = el.getBoundingClientRect();
-                  const text = textOf(el);
-                  return {el, text, area: rect.width * rect.height, top: rect.top};
-                })
-                .filter((item) => item.text.length >= 20 && /\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|搜狗|百度|搜狐|网易|新浪|腾讯|凤凰|今日头条|百家号|知乎|什么值得买|太平洋|中关村/.test(item.text))
-                .sort((a, b) => a.top - b.top || b.area - a.area);
+              const scroller = findScroller(root);
+              const snapshots = [];
+              for (let round = 0; round < 6; round += 1) {
+                snapshots.push(...collectCards(root, round));
+                if (!scroller) break;
+                const beforeTop = scroller.scrollTop;
+                scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + Math.max(scroller.clientHeight * 0.85, 300));
+                scroller.dispatchEvent(new Event('scroll', {bubbles: true}));
+                await sleep(800);
+                if (Math.abs(scroller.scrollTop - beforeTop) < 2) break;
+              }
+              const cards = snapshots.sort((a, b) => a.round - b.round || a.top - b.top || b.area - a.area);
               const selected = [];
+              const selectedTexts = new Set();
               for (const item of cards) {
                 if (selected.some((other) => other.el.contains(item.el) || item.el.contains(other.el))) continue;
+                const key = item.text.slice(0, 120);
+                if (selectedTexts.has(key)) continue;
+                selectedTexts.add(key);
                 selected.push(item);
-                if (selected.length >= 12) break;
+                if (selected.length >= 40) break;
               }
               selected.forEach((item, index) => item.el.setAttribute('data-geomonitor-wenxin-source-index', String(index)));
               return selected.map((item, index) => {
                 const rect = item.el.getBoundingClientRect();
-                return {index, text: item.text, width: Math.round(rect.width), height: Math.round(rect.height), top: Math.round(rect.top)};
+                return {index, text: item.text, width: Math.round(rect.width), height: Math.round(rect.height), top: Math.round(rect.top), round: item.round};
               });
+
+              function collectCards(root, round) {
+                return Array.from(root.querySelectorAll('[class^="item__"], [class*=" item__"], [class*="item__"]'))
+                  .filter(visible)
+                  .map((el) => {
+                    const rect = el.getBoundingClientRect();
+                    const text = textOf(el);
+                    return {el, text, area: rect.width * rect.height, top: rect.top, round};
+                  })
+                  .filter((item) => item.text.length >= 20 && /\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|搜狗|百度|搜狐|网易|新浪|腾讯|凤凰|今日头条|百家号|知乎|什么值得买|太平洋|中关村/.test(item.text));
+              }
+
+              function findScroller(root) {
+                const nodes = [root, ...Array.from(root.querySelectorAll('*'))]
+                  .filter((el) => {
+                    const style = getComputedStyle(el);
+                    return el.scrollHeight > el.clientHeight + 20 && /(auto|scroll|overlay)/.test(`${style.overflowY} ${style.overflow}`);
+                  })
+                  .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+                return nodes[0] || (root.scrollHeight > root.clientHeight + 20 ? root : null);
+              }
             }
             """
         )
@@ -2514,7 +2744,7 @@ async def _collect_wenxin_citations_by_clicking_cards(page) -> tuple[list[dict[s
     debug.append(f"wenxinClickCards candidates={len(candidates)}")
     items: list[dict[str, str]] = []
     original_url = page.url
-    for candidate in candidates[:8]:
+    for candidate in candidates[:40]:
         if not isinstance(candidate, dict):
             continue
         index = candidate.get("index")
@@ -2536,6 +2766,8 @@ async def _collect_wenxin_citations_by_clicking_cards(page) -> tuple[list[dict[s
                 items.append({"title": title or url, "site_name": site_name or _site_name_from_url(url), "url": url})
                 debug.append(f"wenxinCardUrl index={index} url={url}")
             else:
+                if title or site_name:
+                    items.append({"title": title or text[:120], "site_name": site_name, "url": ""})
                 debug.append(f"wenxinCardNoUrl index={index} current={page.url}")
         except Exception as exc:  # noqa: BLE001
             debug.append(f"wenxinCardError index={index}: {exc}")
@@ -2653,9 +2885,17 @@ def _is_external_citation_url(url: str, platform_id: str) -> bool:
 def _dedupe_citation_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
     seen: set[str] = set()
     output: list[dict[str, str]] = []
+    empty_seen: set[tuple[str, str]] = set()
     for item in items:
         url = str(item.get("url") or "")
-        if not url or url in seen:
+        if not url:
+            key = (str(item.get("title") or ""), str(item.get("site_name") or ""))
+            if not any(key) or key in empty_seen:
+                continue
+            empty_seen.add(key)
+            output.append(item)
+            continue
+        if url in seen:
             continue
         seen.add(url)
         output.append(item)
@@ -2790,6 +3030,10 @@ def _normalize_citations(items: list[dict[str, str]]) -> list[dict[str, str]]:
     for item in items:
         url = str(item.get("url", "")).strip()
         if not url.startswith(("http://", "https://")):
+            title = " ".join(str(item.get("title", "")).split()).strip()
+            site_name = " ".join(str(item.get("site_name", "")).split()).strip()
+            if title or site_name:
+                citations.append({"title": title[:500], "site_name": site_name[:180], "url": ""})
             continue
         title = " ".join(str(item.get("title", "")).split()).strip() or url
         site_name = _site_name_from_url(url)
@@ -2801,6 +3045,9 @@ def _filter_platform_citations(citations: list[dict[str, str]], platform_id: str
     filtered: list[dict[str, str]] = []
     for citation in citations:
         url = str(citation.get("url") or "").strip()
+        if not url:
+            filtered.append(citation)
+            continue
         if not _is_external_citation_url(url, platform_id):
             continue
         if answer_url and _same_url_without_fragment(url, answer_url):
