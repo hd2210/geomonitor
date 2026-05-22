@@ -268,12 +268,12 @@
     "browser_channel": null,
     "browser_executable_path": null,
     "browser_cdp_url": null,
-    "viewport_width": 1920,
-    "viewport_height": 2140,
+    "viewport_width": 1440,
+    "viewport_height": 1920,
     "pause_on_blocked_seconds": 20,
     "profile_lock_wait_seconds": 60,
     "browser_concurrency": 5,
     "api_concurrency": 5,
-    "question_count": 5
+    "question_count": 15
   }
 }

@@ -428,7 +428,7 @@ function renderRunResult(run, monitor, options = {}) {
         <button class="tab" data-result-tab="answers">回答详情</button>
       </nav>
       <section id="resultTab-platforms" class="result-tab-panel">
-        <div class="report-grid">
+        <div class="report-grid performance-grid">
           <article class="report-card">
             <h3>提及率排行榜</h3>
             <div class="table-wrap"><table><thead><tr><th>排名</th><th>品牌</th><th>占比</th></tr></thead><tbody id="globalRankingBody">
@@ -436,6 +436,18 @@ function renderRunResult(run, monitor, options = {}) {
             </tbody></table></div>
           </article>
           <article class="report-card">
+            <h3>Top1推荐率排行</h3>
+            <div class="table-wrap"><table><thead><tr><th>排名</th><th>品牌</th><th>推荐率</th><th>命中</th></tr></thead><tbody id="top1RankingBody">
+              ${renderRecommendationRankingRows(buildRecommendationRankingRows(run, "", 1), monitor.brand_name)}
+            </tbody></table></div>
+          </article>
+          <article class="report-card">
+            <h3>Top3推荐率排行</h3>
+            <div class="table-wrap"><table><thead><tr><th>排名</th><th>品牌</th><th>推荐率</th><th>命中</th></tr></thead><tbody id="top3RankingBody">
+              ${renderRecommendationRankingRows(buildRecommendationRankingRows(run, "", 3), monitor.brand_name)}
+            </tbody></table></div>
+          </article>
+          <article class="report-card chart-card">
             <h3>本品在各AI平台提及率排名</h3>
             <canvas id="platformRankChart" height="170"></canvas>
           </article>
@@ -524,6 +536,8 @@ function updatePlatformReport(run, monitor, platform) {
   $("metricCitationCount").textContent = metrics.citationCount;
   const rankingRows = platform ? run.platform_summary.filter((row) => row.platform_id === platform) : run.global_summary;
   $("globalRankingBody").innerHTML = renderGlobalRankingRows(rankingRows, monitor.brand_name);
+  $("top1RankingBody").innerHTML = renderRecommendationRankingRows(buildRecommendationRankingRows(run, platform, 1), monitor.brand_name);
+  $("top3RankingBody").innerHTML = renderRecommendationRankingRows(buildRecommendationRankingRows(run, platform, 3), monitor.brand_name);
   $("platformSummaryBody").innerHTML = renderPlatformSummaryRows(run.platform_summary.filter((row) => !platform || row.platform_id === platform));
   renderReportCharts(run, monitor, platform);
 }
@@ -553,6 +567,47 @@ function renderGlobalRankingRows(rows, brandName) {
     .sort((a, b) => Number(b.appearance_rate || 0) - Number(a.appearance_rate || 0))
     .map((row, index) => `<tr><td><span class="rank-index">${index + 1}</span></td><td>${escapeHtml(row.keyword)}${normalizeText(row.keyword) === normalizeText(brandName) ? ` <span class="brand-tag">当前品牌</span>` : ""}</td><td class="number-cell">${formatPercent(Number(row.appearance_rate || 0))}</td></tr>`)
     .join("");
+}
+
+function buildRecommendationRankingRows(run, platform = "", limit = 1) {
+  const successfulKeys = new Set((run.answers || [])
+    .filter((answer) => isSuccessfulAnswer(answer) && (!platform || answer.platform_id === platform))
+    .map((answer) => `${answer.platform_id}::${answer.question_id}`));
+  const denominator = successfulKeys.size;
+  const seedRows = platform
+    ? (run.platform_summary || []).filter((row) => row.platform_id === platform)
+    : (run.global_summary || []);
+  const byKeyword = new Map();
+  seedRows.forEach((row) => {
+    const keyword = String(row.keyword || "").trim();
+    if (!keyword) return;
+    const key = normalizeText(keyword);
+    if (!byKeyword.has(key)) byKeyword.set(key, {keyword, hits: 0, total: denominator, rate: 0});
+  });
+  (run.analyses || []).forEach((analysis) => {
+    if (platform && analysis.platform_id !== platform) return;
+    const answerKey = `${analysis.platform_id}::${analysis.question_id}`;
+    if (successfulKeys.size && !successfulKeys.has(answerKey)) return;
+    const countedInAnswer = new Set();
+    (analysis.keyword_analysis || []).forEach((item) => {
+      const keyword = String(item.keyword || "").trim();
+      if (!keyword) return;
+      const key = normalizeText(keyword);
+      if (!byKeyword.has(key)) byKeyword.set(key, {keyword, hits: 0, total: denominator, rate: 0});
+      if (item.appeared && Number(item.rank || 999) <= limit && !countedInAnswer.has(key)) {
+        byKeyword.get(key).hits += 1;
+        countedInAnswer.add(key);
+      }
+    });
+  });
+  return [...byKeyword.values()]
+    .map((row) => ({...row, rate: denominator ? row.hits / denominator : 0}))
+    .sort((a, b) => Number(b.rate || 0) - Number(a.rate || 0) || Number(b.hits || 0) - Number(a.hits || 0) || a.keyword.localeCompare(b.keyword, "zh-Hans-CN"));
+}
+
+function renderRecommendationRankingRows(rows, brandName) {
+  if (!rows.length) return `<tr><td colspan="4" class="empty-cell">暂无数据</td></tr>`;
+  return rows.map((row, index) => `<tr><td><span class="rank-index">${index + 1}</span></td><td>${escapeHtml(row.keyword)}${normalizeText(row.keyword) === normalizeText(brandName) ? ` <span class="brand-tag">当前品牌</span>` : ""}</td><td class="number-cell">${formatPercent(row.rate)}</td><td>${escapeHtml(row.hits)}/${escapeHtml(row.total)}</td></tr>`).join("");
 }
 
 function renderReportCharts(run, monitor, platform = "") {
