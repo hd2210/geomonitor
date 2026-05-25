@@ -95,28 +95,11 @@ class UserStore:
         if column not in columns:
             db.execute(f"alter table {table} add column {column} {definition}")
 
-    def save_code(self, phone: str, company_name: str | None, code: str = "123456") -> None:
+    def login_verified(self, phone: str, company_name: str | None = None) -> tuple[str, dict[str, Any]]:
         with self._connect() as db:
-            db.execute(
-                """
-                insert into sms_codes(phone, company_name, code, created_at)
-                values(?, ?, ?, ?)
-                on conflict(phone) do update set
-                  company_name=excluded.company_name,
-                  code=excluded.code,
-                  created_at=excluded.created_at
-                """,
-                (phone, company_name or "", code, now_iso()),
-            )
-
-    def login(self, phone: str, code: str, company_name: str | None = None) -> tuple[str, dict[str, Any]]:
-        with self._connect() as db:
-            row = db.execute("select * from sms_codes where phone = ?", (phone,)).fetchone()
-            if row is None or row["code"] != code:
-                raise ValueError("验证码不正确。")
             user = db.execute("select * from users where phone = ?", (phone,)).fetchone()
             current = now_iso()
-            final_company = (company_name or row["company_name"] or "").strip()
+            final_company = (company_name or "").strip()
             if user is None:
                 cursor = db.execute(
                     "insert into users(phone, company_name, created_at, last_login_at) values(?, ?, ?, ?)",

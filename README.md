@@ -4,7 +4,7 @@
 
 ## 当前版本能力
 
-- 用户登录：手机号短信验证码登录，本地开发模式验证码固定为 `123456`；登录后如果该手机号还没有公司名称，会要求补填一次公司名称后再进入系统。
+- 用户登录：手机号短信验证码登录，验证码通过短信服务发送和校验；登录后如果该手机号还没有公司名称，会要求补填一次公司名称后再进入系统。
 - 创建 AI 监测：输入目标品牌名和消费者意图，系统按后台配置生成消费者问题，默认 15 个，用户可逐条编辑确认。
 - 平台选择：普通用户可从管理后台启用的 AI 网站中选择本次要监测的平台，至少选择一个。
 - 浏览器采集：默认使用 Playwright Chromium 打开 AI 网站；豆包默认使用 Chrome DevTools Protocol 连接真实 Chrome，以复用独立 Chrome 登录态。每个平台每个问题新开一轮对话，保存完整回答文本、HTML、页面截图和引用信源。
@@ -30,7 +30,7 @@ geomonitor/
   answer_storage.py        # run 目录、JSONL、截图、HTML、API 原始响应落盘
   keyword_analyzer.py      # 关键词/别名边界匹配、列表排名、首次出现排名
   statistics_reporter.py   # CSV 汇总和 report.md
-  user_store.py            # SQLite 用户、短信码、会话、配额和监测任务存储
+  user_store.py            # SQLite 用户、会话、配额和监测任务存储
   scheduler.py             # interval / daily / weekly / cron 调度
   web_server.py            # 本地 Web 应用与 API
   platform_templates.py    # 默认 AI 网站配置
@@ -64,6 +64,9 @@ ASTRAFLOW_API_KEY=your_api_key_here
 ```text
 ASTRAFLOW_API_BASE_URL=https://api.modelverse.cn/v1/chat/completions
 ADMIN_PASSWORD=yunzhigeo
+SMS_API_BASE_URL=https://cloud.ts-martech.com/api/sms
+SMS_NOTICE_TEMPLATE_ID=UTN2605181K4Q0D
+SMS_NOTICE_TEMPLATE_PARAM=GEO监测页面
 ```
 
 HTTPS 企业代理环境可选：
@@ -126,11 +129,7 @@ http://127.0.0.1:8765/admin
 
 ### 2. 用户登录
 
-普通用户访问首页，输入手机号并获取验证码。当前本地开发验证码固定为：
-
-```text
-123456
-```
+普通用户访问首页，输入手机号并获取验证码。手机号必须是 `1` 开头的 11 位数字；前端会先校验格式，后端接口也会再次校验。验证码会通过 `SMS_API_BASE_URL` 配置的短信服务发送，并在登录时调用短信服务校验；验证码发送成功后，获取按钮会进入 60 秒倒计时，期间不可重复点击。
 
 如果该手机号还没有填写过公司名称，登录成功后会进入公司名称补填页；填写一次后，后续登录不再要求。每个手机号默认可创建 3 次监测任务，管理员可在 `/admin` 用户管理中调整总次数。
 
@@ -154,7 +153,7 @@ http://127.0.0.1:8765/admin
 5. 将目标品牌和竞品一起纳入关键词分析。
 6. 生成平台级统计、全局统计、引用信源统计和 Markdown 报告。
 
-用户可以离开页面，任务会在后台继续执行。当前短信通知为本地模拟信息，写入监测任务的 `notification_message`。
+用户可以离开页面，任务会在后台继续执行。任务完成后会调用短信通知接口，并把通知结果写入监测任务的 `notification_message`。
 
 ### 5. 查看结果与重试
 
@@ -390,14 +389,20 @@ cp .env.example .env
 ASTRAFLOW_API_KEY=your_api_key_here
 ASTRAFLOW_API_BASE_URL=https://api.modelverse.cn/v1/chat/completions
 ADMIN_PASSWORD=yunzhigeo
+SMS_API_BASE_URL=https://cloud.ts-martech.com/api/sms
+SMS_NOTICE_TEMPLATE_ID=UTN2605181K4Q0D
+SMS_NOTICE_TEMPLATE_PARAM=GEO监测页面
 ```
 
 如服务器处在企业代理或自签证书环境，可按需配置：
 
 ```text
 ASTRAFLOW_CA_BUNDLE=/path/to/company-ca-bundle.pem
+SMS_CA_BUNDLE=/path/to/company-ca-bundle.pem
 ASTRAFLOW_VERIFY_SSL=false
 ```
+
+短信接口默认会使用 `certifi` 提供的 CA 证书包进行 HTTPS 校验；如果部署环境需要使用企业自签证书，可通过 `SMS_CA_BUNDLE` 指定证书文件。
 
 ### 5. 本机测试启动
 

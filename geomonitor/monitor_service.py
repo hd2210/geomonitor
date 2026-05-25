@@ -12,6 +12,7 @@ from .config_loader import load_config
 from .keyword_analyzer import KeywordAnalyzer
 from .llm_client import AstraFlowLLMClient
 from .models import AIPlatform, AnswerRecord, BrowserAccount, KeywordAnalysisRecord, Question, TargetKeyword, make_run_id
+from .sms_client import SMSClient
 from .statistics_reporter import StatisticsReporter
 from .user_store import UserStore, now_iso
 
@@ -109,7 +110,7 @@ class MonitorJobManager:
                 completed_at=now_iso(),
                 error_message=str(exc),
                 progress_message=f"监测失败：{exc}",
-                notification_message=f"模拟短信：您的 AI 监测任务失败：{exc}",
+                notification_message=f"短信通知未发送：监测任务失败：{exc}",
             )
 
     async def _retry_failed(self, monitor_id: int) -> None:
@@ -135,7 +136,7 @@ class MonitorJobManager:
                     monitor_id,
                     status="completed",
                     progress_message="没有失败请求需要重试",
-                    notification_message=f"模拟短信：您的 AI 监测任务 {run_id} 没有失败请求需要重试。",
+                    notification_message=f"短信通知未发送：AI 监测任务 {run_id} 没有失败请求需要重试。",
                 )
                 return
 
@@ -194,7 +195,7 @@ class MonitorJobManager:
                 completed_at=now_iso(),
                 error_message=str(exc),
                 progress_message=f"重试失败：{exc}",
-                notification_message=f"模拟短信：您的 AI 监测任务重试失败：{exc}",
+                notification_message=f"短信通知未发送：AI 监测任务重试失败：{exc}",
             )
 
     async def _retry_single_answer(self, monitor_id: int, platform_id: str, question_id: str) -> None:
@@ -257,7 +258,7 @@ class MonitorJobManager:
                     progress_total=1,
                     progress_message="单条补采集完成，已保留原有品牌统计",
                     error_message=None,
-                    notification_message=f"模拟短信：您的 AI 监测任务 {run_id} 单条补采集已完成。",
+                    notification_message=f"短信通知未发送：AI 监测任务 {run_id} 单条补采集已完成。",
                 )
                 return
 
@@ -279,7 +280,7 @@ class MonitorJobManager:
                     progress_total=1,
                     progress_message=f"单条重试未获得新增有效回答：{status_text}，已跳过竞品重算",
                     error_message=None,
-                    notification_message=f"模拟短信：您的 AI 监测任务 {run_id} 单条重试未获得新增有效回答。",
+                    notification_message=f"短信通知未发送：AI 监测任务 {run_id} 单条重试未获得新增有效回答。",
                 )
                 return
             platforms = [item for item in config.ai_platforms if item.platform_id in selected]
@@ -300,7 +301,7 @@ class MonitorJobManager:
                 completed_at=now_iso(),
                 error_message=str(exc),
                 progress_message=f"单条重试失败：{exc}",
-                notification_message=f"模拟短信：您的 AI 监测任务单条重试失败：{exc}",
+                notification_message=f"短信通知未发送：AI 监测任务单条重试失败：{exc}",
             )
 
     async def _collect_answers(
@@ -455,6 +456,7 @@ class MonitorJobManager:
         storage.rewrite_keyword_analysis(analyses)
         reporter = StatisticsReporter(run_id, platforms, keywords)
         reporter.write_outputs(run_dir, answers, analyses)
+        notification_message = await asyncio.to_thread(_send_monitor_notice, self.store, monitor_id, run_id)
         self.store.update_monitor(
             monitor_id,
             status="completed",
@@ -465,7 +467,7 @@ class MonitorJobManager:
             progress_total=len(answers),
             progress_message=done_message,
             error_message=None,
-            notification_message=f"模拟短信：您的 AI 监测任务 {run_id} 已完成。",
+            notification_message=notification_message,
         )
 
 
@@ -489,6 +491,19 @@ def _keywords_from_competitors(brand_name: str, payload: dict[str, Any]) -> list
         if len(keywords) >= 11:
             break
     return keywords
+
+
+def _send_monitor_notice(store: UserStore, monitor_id: int, run_id: str) -> str:
+    monitor = store.get_monitor(monitor_id)
+    user = store.get_user_by_id(int(monitor["user_id"])) if monitor else None
+    mobile = str((user or {}).get("phone") or "").strip()
+    if not mobile:
+        return "短信通知失败：未找到用户手机号。"
+    try:
+        SMSClient().send_notice(mobile)
+        return f"短信通知已发送：AI 监测任务 {run_id} 已完成。"
+    except Exception as exc:  # noqa: BLE001
+        return f"短信通知失败：{exc}"
 
 
 def _blocked_account_ids(statuses: list[dict[str, Any]], platform_id: str) -> set[str]:

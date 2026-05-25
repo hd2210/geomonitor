@@ -12,10 +12,12 @@ const state = {
   adminTab: "config",
   reportChart: null,
   accountStatuses: [],
+  codeCountdownTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
 const isAdminPage = location.pathname === "/admin";
+const phonePattern = /^1\d{10}$/;
 
 async function init() {
   bindStaticEvents();
@@ -99,6 +101,14 @@ async function initAdmin() {
 
 async function sendCode() {
   const phone = $("loginPhone").value.trim();
+  if (!validateLoginPhone(phone)) {
+    return;
+  }
+  if (state.codeCountdownTimer) {
+    return;
+  }
+  $("sendCodeButton").disabled = true;
+  $("sendCodeButton").textContent = "发送中...";
   $("loginMessage").textContent = "正在发送验证码...";
   try {
     const payload = await fetchJson("/api/auth/send-code", {
@@ -107,18 +117,25 @@ async function sendCode() {
       body: JSON.stringify({phone}),
     });
     $("loginMessage").textContent = payload.message || "验证码已发送。";
+    startCodeCountdown(60);
   } catch (error) {
     $("loginMessage").textContent = error.message;
+    $("sendCodeButton").disabled = false;
+    $("sendCodeButton").textContent = "获取验证码";
   }
 }
 
 async function login() {
+  const phone = $("loginPhone").value.trim();
+  if (!validateLoginPhone(phone)) {
+    return;
+  }
   try {
     await fetchJson("/api/auth/login", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
-        phone: $("loginPhone").value.trim(),
+        phone,
         code: $("loginCode").value.trim(),
       }),
     });
@@ -126,6 +143,32 @@ async function login() {
   } catch (error) {
     $("loginMessage").textContent = error.message;
   }
+}
+
+function validateLoginPhone(phone) {
+  if (!phonePattern.test(phone)) {
+    $("loginMessage").textContent = "手机号格式不正确，请输入 1 开头的 11 位数字。";
+    $("loginPhone").focus();
+    return false;
+  }
+  return true;
+}
+
+function startCodeCountdown(seconds) {
+  let remaining = seconds;
+  $("sendCodeButton").disabled = true;
+  $("sendCodeButton").textContent = `${remaining}s 后重试`;
+  state.codeCountdownTimer = window.setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      window.clearInterval(state.codeCountdownTimer);
+      state.codeCountdownTimer = null;
+      $("sendCodeButton").disabled = false;
+      $("sendCodeButton").textContent = "获取验证码";
+      return;
+    }
+    $("sendCodeButton").textContent = `${remaining}s 后重试`;
+  }, 1000);
 }
 
 async function saveCompanyName() {

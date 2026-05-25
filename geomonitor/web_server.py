@@ -4,6 +4,7 @@ import csv
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -19,12 +20,14 @@ from .env_loader import load_env_file
 from .llm_client import AstraFlowLLMClient
 from .monitor_service import MonitorJobManager
 from .platform_templates import browser_platform_defaults
+from .sms_client import SMSClient
 from .user_store import UserStore
 
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 SESSION_COOKIE = "geomonitor_session"
 ADMIN_COOKIE = "geomonitor_admin"
+PHONE_RE = re.compile(r"^1\d{10}$")
 
 
 class RunJobState:
@@ -231,17 +234,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/auth/send-code":
                 payload = self._read_json_body()
                 phone = str(payload.get("phone", "")).strip()
-                if not phone:
-                    raise ValueError("手机号不能为空。")
-                self.store.save_code(phone, None, "123456")
-                self._json({"status": "sent", "message": "本地验证码为 123456"})
+                _validate_phone(phone)
+                SMSClient().send_code(phone)
+                self._json({"status": "sent", "message": "验证码已发送。"})
                 return
             if path == "/api/auth/login":
                 payload = self._read_json_body()
-                token, user = self.store.login(
-                    str(payload.get("phone", "")).strip(),
-                    str(payload.get("code", "")).strip(),
-                )
+                phone = str(payload.get("phone", "")).strip()
+                code = str(payload.get("code", "")).strip()
+                _validate_phone(phone)
+                if not code:
+                    raise ValueError("验证码不能为空。")
+                SMSClient().verify_code(phone, code)
+                token, user = self.store.login_verified(phone)
                 self._json({"status": "success", "user": user}, cookies=[_cookie(SESSION_COOKIE, token)])
                 return
             if path == "/api/auth/company":
@@ -922,6 +927,11 @@ def _validate_citation_triggers(value) -> list[str]:
             seen.add(key)
             triggers.append(trigger)
     return triggers
+
+
+def _validate_phone(phone: str) -> None:
+    if not PHONE_RE.fullmatch(phone):
+        raise ValueError("手机号格式不正确，请输入 1 开头的 11 位数字。")
 
 
 def _validate_runner(value) -> dict:
