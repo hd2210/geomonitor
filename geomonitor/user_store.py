@@ -109,7 +109,7 @@ class UserStore:
                 (phone, company_name or "", code, now_iso()),
             )
 
-    def login(self, phone: str, company_name: str | None, code: str) -> tuple[str, dict[str, Any]]:
+    def login(self, phone: str, code: str, company_name: str | None = None) -> tuple[str, dict[str, Any]]:
         with self._connect() as db:
             row = db.execute("select * from sms_codes where phone = ?", (phone,)).fetchone()
             if row is None or row["code"] != code:
@@ -118,8 +118,6 @@ class UserStore:
             current = now_iso()
             final_company = (company_name or row["company_name"] or "").strip()
             if user is None:
-                if not final_company:
-                    raise ValueError("首次登录需要填写公司名称。")
                 cursor = db.execute(
                     "insert into users(phone, company_name, created_at, last_login_at) values(?, ?, ?, ?)",
                     (phone, final_company, current, current),
@@ -133,6 +131,16 @@ class UserStore:
             token = secrets.token_urlsafe(32)
             db.execute("insert into sessions(token, user_id, created_at) values(?, ?, ?)", (token, user_id, current))
         return token, self.get_user_by_id(user_id) or {}
+
+    def update_company_name(self, user_id: int, company_name: str) -> dict[str, Any]:
+        final_company = company_name.strip()
+        if not final_company:
+            raise ValueError("公司名称不能为空。")
+        with self._connect() as db:
+            cursor = db.execute("update users set company_name = ? where id = ?", (final_company, user_id))
+            if cursor.rowcount == 0:
+                raise ValueError("用户不存在。")
+        return self.get_user_by_id(user_id) or {}
 
     def user_for_token(self, token: str | None) -> dict[str, Any] | None:
         if not token:

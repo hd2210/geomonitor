@@ -29,6 +29,7 @@ async function init() {
 function bindStaticEvents() {
   $("sendCodeButton").addEventListener("click", sendCode);
   $("loginButton").addEventListener("click", login);
+  $("saveCompanyButton").addEventListener("click", saveCompanyName);
   $("logoutButton").addEventListener("click", logout);
   $("adminLoginButton").addEventListener("click", adminLogin);
   $("adminLogoutButton").addEventListener("click", adminLogout);
@@ -58,10 +59,18 @@ async function initUser() {
   state.user = me.user;
   if (!state.user) {
     $("loginRoot").classList.remove("hidden");
+    $("companyRoot").classList.add("hidden");
     $("userRoot").classList.add("hidden");
     return;
   }
   $("loginRoot").classList.add("hidden");
+  if (!String(state.user.company_name || "").trim()) {
+    $("companyRoot").classList.remove("hidden");
+    $("userRoot").classList.add("hidden");
+    $("companyNameInput").focus();
+    return;
+  }
+  $("companyRoot").classList.add("hidden");
   $("userRoot").classList.remove("hidden");
   $("userName").textContent = `${state.user.company_name} · ${state.user.phone}`;
   setUserView("create");
@@ -71,6 +80,7 @@ async function initUser() {
 
 async function initAdmin() {
   $("loginRoot").classList.add("hidden");
+  $("companyRoot").classList.add("hidden");
   $("userRoot").classList.add("hidden");
   $("adminRoot").classList.remove("hidden");
   const me = await fetchJson("/api/admin/me");
@@ -89,13 +99,12 @@ async function initAdmin() {
 
 async function sendCode() {
   const phone = $("loginPhone").value.trim();
-  const companyName = $("loginCompany").value.trim();
   $("loginMessage").textContent = "正在发送验证码...";
   try {
     const payload = await fetchJson("/api/auth/send-code", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({phone, company_name: companyName}),
+      body: JSON.stringify({phone}),
     });
     $("loginMessage").textContent = payload.message || "验证码已发送。";
   } catch (error) {
@@ -110,13 +119,26 @@ async function login() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         phone: $("loginPhone").value.trim(),
-        company_name: $("loginCompany").value.trim(),
         code: $("loginCode").value.trim(),
       }),
     });
     await initUser();
   } catch (error) {
     $("loginMessage").textContent = error.message;
+  }
+}
+
+async function saveCompanyName() {
+  $("companyMessage").textContent = "正在保存...";
+  try {
+    await fetchJson("/api/auth/company", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({company_name: $("companyNameInput").value.trim()}),
+    });
+    await initUser();
+  } catch (error) {
+    $("companyMessage").textContent = error.message;
   }
 }
 

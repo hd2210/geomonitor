@@ -193,11 +193,12 @@
       "method": "browser",
       "enabled": true,
       "browser_mode": "cdp",
+      "cdp_url": "http://127.0.0.1:9224",
       "accounts": [
         {
           "account_id": "wenxin_1",
           "enabled": true,
-          "account_name": "18611212664",
+          "account_name": "账号1",
           "cdp_url": "http://127.0.0.1:9224",
           "chrome_user_data_dir": "./data/cdp-profiles/wenxin/account-1"
         }
@@ -269,7 +270,7 @@
     "browser_executable_path": null,
     "browser_cdp_url": null,
     "viewport_width": 1440,
-    "viewport_height": 1920,
+    "viewport_height": 720,
     "pause_on_blocked_seconds": 20,
     "profile_lock_wait_seconds": 60,
     "browser_concurrency": 5,

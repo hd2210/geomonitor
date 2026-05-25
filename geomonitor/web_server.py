@@ -231,20 +231,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/auth/send-code":
                 payload = self._read_json_body()
                 phone = str(payload.get("phone", "")).strip()
-                company_name = str(payload.get("company_name", "")).strip()
                 if not phone:
                     raise ValueError("手机号不能为空。")
-                self.store.save_code(phone, company_name, "123456")
+                self.store.save_code(phone, None, "123456")
                 self._json({"status": "sent", "message": "本地验证码为 123456"})
                 return
             if path == "/api/auth/login":
                 payload = self._read_json_body()
                 token, user = self.store.login(
                     str(payload.get("phone", "")).strip(),
-                    str(payload.get("company_name", "")).strip(),
                     str(payload.get("code", "")).strip(),
                 )
                 self._json({"status": "success", "user": user}, cookies=[_cookie(SESSION_COOKIE, token)])
+                return
+            if path == "/api/auth/company":
+                user = self._require_user()
+                payload = self._read_json_body()
+                updated = self.store.update_company_name(int(user["id"]), str(payload.get("company_name", "")).strip())
+                self._json({"status": "success", "user": updated})
                 return
             if path == "/api/auth/logout":
                 token = self._cookies().get(SESSION_COOKIE)

@@ -16,7 +16,6 @@
             <p>登录后创建 AI 提及率监测</p>
           </div>
         </div>
-        <label><span>公司名称</span><input id="loginCompany" placeholder="请输入公司名称" /></label>
         <label><span>手机号</span><input id="loginPhone" placeholder="请输入手机号" /></label>
         <div class="inline-form">
           <label><span>短信验证码</span><input id="loginCode" placeholder="本地模式 123456" /></label>
@@ -24,6 +23,21 @@
         </div>
         <button id="loginButton" class="primary-button full">登录 / 注册</button>
         <p id="loginMessage" class="panel-note"></p>
+      </div>
+    </section>
+
+    <section id="companyRoot" class="auth-shell hidden">
+      <div class="auth-card">
+        <div class="brand">
+          <div class="geo-logo">云智<span>GEO</span></div>
+          <div>
+            <h1>完善公司信息</h1>
+            <p>首次使用前需要填写一次公司名称</p>
+          </div>
+        </div>
+        <label><span>公司名称</span><input id="companyNameInput" placeholder="请输入公司名称" /></label>
+        <button id="saveCompanyButton" class="primary-button full">进入系统</button>
+        <p id="companyMessage" class="panel-note"></p>
       </div>
     </section>
 
@@ -179,6 +193,6 @@
     </section>
 
     <script src="/chart.umd.min.js?v=4.4.9"></script>
-    <script src="/app.js?v=geo-redesign-1"></script>
+    <script src="/app.js?v=geo-redesign-2"></script>
   </body>
 </html>
