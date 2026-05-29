@@ -538,6 +538,7 @@ python3 -m geomonitor.cli login --config configs/sample_config.json --platform-i
 - CDP 模式会先尝试复用已运行的 Chrome 调试端口；如果没有运行，会自动启动 Chrome 并打开目标 AI 网站。豆包目前默认使用 CDP 模式。
 - CDP 模式每次查询会新建一个临时标签页，查询完成后自动关闭该标签页；Chrome 进程和登录态会保留，方便后续问题继续复用。
 - `data/app.sqlite3` 保存用户、配额和监测任务；`data/ai_visibility_monitor/runs/` 保存历史监测结果。生产环境需要定期备份这两个位置。
+- 如需合并误注册手机号的数据，先备份 `data/app.sqlite3`，再在 SQLite 中把源用户的 `monitors.user_id` 和 `sessions.user_id` 更新为目标用户 ID；run 目录按 `run_id` 关联，通常无需移动。
 
 ## Windows 部署补充
 
